@@ -186,7 +186,7 @@ fn params_from_config(
         frame_index,
         total_frames,
         seed: config.scene.seed,
-        time_seconds: frame_index as f32 / config.scene.fps,
+        time_seconds: (frame_index as f32 / config.scene.fps) * config.simulation.motion_scale,
         duration_seconds: config.scene.duration,
         fps: config.scene.fps,
         quality: match config.render.quality {

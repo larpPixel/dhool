@@ -84,6 +84,8 @@ pub struct SimulationConfig {
     pub field_width: u32,
     pub field_height: u32,
     pub substeps: u32,
+    #[serde(default = "default_motion_scale")]
+    pub motion_scale: f32,
     pub velocity_decay: f32,
     pub vorticity: f32,
     pub buoyancy: f32,
@@ -264,6 +266,12 @@ impl Config {
             "simulation.substeps must be positive",
         )?;
         range(
+            self.simulation.motion_scale,
+            0.01,
+            4.0,
+            "simulation.motion_scale",
+        )?;
+        range(
             self.simulation.velocity_decay,
             0.0,
             1.0,
@@ -400,6 +408,10 @@ fn require(condition: bool, message: &str) -> Result<(), ConfigError> {
     } else {
         Err(ConfigError::Invalid(message.to_string()))
     }
+}
+
+fn default_motion_scale() -> f32 {
+    1.0
 }
 
 #[cfg(test)]
