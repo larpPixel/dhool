@@ -202,35 +202,70 @@ __device__ float2 field_flow(float2 p, float t, uint64_t seed, const DhoolRender
 }
 
 __device__ float plasma_mask(float2 p, float t, uint64_t seed, const DhoolRenderParams& params) {
+    float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
     float2 flow = field_flow(p, t, seed, params);
-    float2 warped = add2(p, mul2(flow, 0.11f + params.plasma_edge_wrapping * 0.05f));
-    warped.x += (fbm(make_float2(p.x * 2.0f, p.y * 2.0f + t * 0.15f), seed + 71ULL) - 0.5f) * 0.22f;
-    warped.y += (fbm(make_float2(p.x * 2.8f - t * 0.2f, p.y * 2.0f), seed + 73ULL) - 0.5f) * 0.18f;
+    float2 warped = add2(p, mul2(flow, 0.045f + params.plasma_edge_wrapping * 0.025f));
+    warped.x += (fbm(make_float2(p.x * 2.0f, p.y * 2.0f + t * 0.15f), seed + 71ULL) - 0.5f) * 0.11f;
+    warped.y += (fbm(make_float2(p.x * 2.8f - t * 0.2f, p.y * 2.0f), seed + 73ULL) - 0.5f) * 0.09f;
 
-    float plume = expf(-2.15f * ((warped.x + 0.16f) * (warped.x + 0.16f) + (warped.y + 0.12f) * (warped.y + 0.12f)));
-    float core_line = warped.y + 0.05f + 0.17f * sinf(warped.x * 3.8f - t * 0.55f);
-    core_line += (fbm(make_float2(warped.x * 3.4f + t * 0.2f, warped.y * 3.4f), seed + 91ULL) - 0.5f) * 0.34f;
-    float core = expf(-fabsf(core_line) * (6.8f + params.plasma_filament_density * 3.2f));
+    float x = warped.x / aspect;
+    float y = warped.y;
+    float left_curve = 0.025f - 0.47f * x + 0.045f * sinf(11.0f * x + t * 0.55f);
+    float right_curve = -0.060f + 0.66f * (x - 0.04f) + 0.060f * sinf(9.0f * x - t * 0.45f);
+    float lower_curve = -0.315f + 0.34f * (x + 0.08f) + 0.040f * sinf(13.0f * x + t * 0.38f);
+    left_curve += (fbm(make_float2(x * 5.0f + t * 0.12f, 1.3f), seed + 81ULL) - 0.5f) * 0.050f;
+    right_curve += (fbm(make_float2(x * 5.5f - t * 0.10f, 4.7f), seed + 83ULL) - 0.5f) * 0.060f;
+    lower_curve += (fbm(make_float2(x * 4.8f + t * 0.08f, 8.2f), seed + 85ULL) - 0.5f) * 0.045f;
 
-    float filament_wave = sinf((warped.x * 6.3f + warped.y * 8.2f + t * 0.86f) * (1.7f + params.plasma_filament_density));
-    filament_wave += 0.85f * sinf((warped.x * -9.1f + warped.y * 5.6f - t * 0.52f) * (1.2f + params.plasma_filament_density * 0.7f));
-    float filament = powf(saturate(ridge(0.5f + 0.25f * filament_wave)), 5.5f);
-    float fine = powf(saturate(fbm(make_float2(warped.x * 12.0f + t, warped.y * 12.0f - t * 0.6f), seed + 101ULL)), 2.7f);
-    return plume * (0.26f + core * 1.55f + filament * fine * 1.85f);
+    float left_gate = smooth(saturate((0.16f - x) * 3.4f));
+    float right_gate = smooth(saturate((x + 0.03f) * 3.5f));
+    float lower_gate = smooth(saturate((x + 0.18f) * 3.2f)) * smooth(saturate((-0.03f - y) * 3.0f));
+    float d_left = fabsf(y - left_curve);
+    float d_right = fabsf(y - right_curve);
+    float d_lower = fabsf(y - lower_curve);
+    float core_width = 23.0f + params.plasma_filament_density * 10.0f;
+    float sheath_width = 7.5f + params.plasma_filament_density * 1.5f;
+    float core = expf(-d_left * core_width) * left_gate;
+    core += expf(-d_right * core_width) * right_gate;
+    core += expf(-d_lower * core_width) * lower_gate;
+    float sheath = expf(-d_left * sheath_width) * left_gate;
+    sheath += expf(-d_right * sheath_width) * right_gate;
+    sheath += expf(-d_lower * sheath_width) * lower_gate;
+
+    float filament_wave = sinf((warped.x * 11.0f + warped.y * 7.0f + t * 0.82f) * (1.3f + params.plasma_filament_density));
+    filament_wave += 0.7f * sinf((warped.x * -15.0f + warped.y * 9.0f - t * 0.46f) * (1.1f + params.plasma_filament_density * 0.6f));
+    float filament = powf(saturate(ridge(0.5f + 0.24f * filament_wave)), 6.2f);
+    float fine = powf(saturate(fbm(make_float2(warped.x * 18.0f + t, warped.y * 18.0f - t * 0.6f), seed + 101ULL)), 3.0f);
+    float void_mask = expf(-(x * x * 18.0f + (y - 0.18f) * (y - 0.18f) * 34.0f));
+    float source = core * (0.85f + filament * fine * 1.8f) + sheath * 0.16f;
+    return source * (1.0f - 0.90f * void_mask);
+}
+
+__device__ float terrain_ridge_y(float2 p, float t, uint64_t seed) {
+    float left_mass = 0.11f * expf(-((p.x + 0.62f) * (p.x + 0.62f)) / 0.055f);
+    float right_mass = 0.18f * expf(-((p.x - 0.56f) * (p.x - 0.56f)) / 0.070f);
+    float center_dip = -0.10f * expf(-(p.x * p.x) / 0.18f);
+    float rock_noise = 0.055f * fbm(make_float2(p.x * 4.0f + t * 0.02f, 0.5f), seed + 223ULL);
+    return -0.405f + left_mass + right_mass + center_dip + 0.035f * sinf(p.x * 9.0f + 1.1f) + rock_noise;
 }
 
 __device__ float terrain_mask(float2 p, float t, uint64_t seed) {
-    float ridge_line = -0.43f + 0.06f * sinf(p.x * 4.3f + 1.1f) + 0.045f * fbm(make_float2(p.x * 3.0f + t * 0.02f, 0.5f), seed + 223ULL);
+    float ridge_line = terrain_ridge_y(p, t, seed);
     return smooth(saturate((ridge_line - p.y) * 18.0f));
+}
+
+__device__ float terrain_rim(float2 p, float t, uint64_t seed) {
+    float ridge_line = terrain_ridge_y(p, t, seed);
+    return expf(-fabsf(p.y - ridge_line) * 42.0f) * smooth(saturate((p.y - ridge_line + 0.08f) * 9.0f));
 }
 
 __device__ float smoke_layer(float2 p, float t, uint64_t seed, const DhoolRenderParams& params, float plasma) {
     float2 flow = field_flow(p, t, seed + 303ULL, params);
     float2 advected = add2(p, mul2(flow, -0.20f * params.advection_dissipation));
     advected.y -= t * 0.055f;
-    float broad = fbm(make_float2(advected.x * 1.35f, advected.y * 1.15f), seed + 307ULL);
-    float sheet = fbm(make_float2(advected.x * 3.4f + broad * 0.8f, advected.y * 2.6f - t * 0.08f), seed + 311ULL);
-    float haze = saturate((broad * 0.72f + sheet * 0.38f - 0.33f) * 1.65f);
+    float broad = fbm(make_float2(advected.x * 1.15f, advected.y * 1.05f), seed + 307ULL);
+    float sheet = fbm(make_float2(advected.x * 3.1f + broad * 0.8f, advected.y * 2.2f - t * 0.08f), seed + 311ULL);
+    float haze = saturate((broad * 0.66f + sheet * 0.34f - 0.39f) * 1.45f);
     float depth = smooth(saturate((p.y + 0.58f) * 1.7f)) * smooth(saturate((0.58f - p.y) * 1.2f));
     float plasma_cut = 1.0f - saturate(plasma * 0.28f);
     return haze * depth * plasma_cut * params.smoke_density;
@@ -276,9 +311,9 @@ __device__ float particle_layer(
             float cross = dot2(d, make_float2(-dir.y, dir.x));
             float size_px = params.particles_size_min + (params.particles_size_max - params.particles_size_min) * heat;
             float radius = size_px / 1080.0f;
-            float streak = expf(-(cross * cross) / (radius * radius * 1.5f) - (along * along) / (radius * radius * 24.0f));
+            float streak = expf(-(cross * cross) / (radius * radius * 1.35f) - (along * along) / (radius * radius * 7.5f));
             float life = smooth(saturate(age * 5.0f)) * smooth(saturate((1.0f - age) * 2.8f));
-            acc += streak * life * (0.22f + heat * 1.2f) * saturate(spawn * 1.8f);
+            acc += streak * life * (0.16f + heat * 0.72f) * saturate(spawn * 1.55f);
         }
     }
     return acc * params.particles_ember_brightness;
@@ -301,25 +336,29 @@ __global__ void render_hdr_kernel(float4* hdr, DhoolRenderParams params) {
     float smoke = smoke_layer(p, t, seed, params, plasma);
     float embers = particle_layer(uv, p, t, seed, params, aspect);
     float terrain = terrain_mask(p, t, seed);
+    float rim = terrain_rim(p, t, seed);
 
-    float vertical_falloff = smooth(saturate((p.y + 0.74f) * 1.4f));
-    float negative_space = smooth(saturate((0.92f - len2(make_float2(p.x + 0.35f, p.y - 0.08f))) * 1.1f));
-    float hot = plasma * params.plasma_emission_strength * (0.55f + params.plasma_core_temperature);
-    float3 hot_core = make_float3(7.8f, 2.85f, 0.36f);
-    float3 hot_edge = make_float3(2.8f, 0.48f, 0.08f);
-    float3 ember_color = make_float3(5.0f, 1.45f, 0.22f);
+    float central_void = expf(-((p.x * p.x) * 3.0f + (p.y - 0.15f) * (p.y - 0.15f) * 7.0f));
+    float edge_focus = 0.72f + 0.28f * smooth(saturate((fabsf(p.x) - 0.10f) * 2.0f));
+    float hot = powf(saturate(plasma), 1.18f) * params.plasma_emission_strength * (0.20f + params.plasma_core_temperature * 0.22f);
+    float3 hot_core = make_float3(4.6f, 1.45f, 0.20f);
+    float3 hot_edge = make_float3(1.8f, 0.32f, 0.055f);
+    float3 ember_color = make_float3(3.3f, 0.88f, 0.16f);
     float3 cool_smoke = make_float3(params.smoke_color_cool[0], params.smoke_color_cool[1], params.smoke_color_cool[2]);
     float3 warm_smoke = make_float3(params.smoke_color_warm[0], params.smoke_color_warm[1], params.smoke_color_warm[2]);
     float3 smoke_color = mix3(cool_smoke, warm_smoke, saturate(plasma * params.smoke_scattering * 0.75f + 0.15f));
-    float3 background = make_float3(0.010f, 0.011f, 0.013f);
+    float3 background = make_float3(0.004f, 0.0045f, 0.0055f);
 
     float3 color = background;
-    color = add3(color, mul3(smoke_color, smoke * (0.8f + params.smoke_scattering)));
+    color = add3(color, mul3(smoke_color, smoke * (0.55f + params.smoke_scattering * 0.50f)));
     color = add3(color, mul3(mix3(hot_edge, hot_core, saturate(plasma * 1.4f)), hot));
-    color = add3(color, mul3(ember_color, embers));
-    color = mul3(color, vertical_falloff * (0.56f + negative_space * 0.56f));
-    color = mix3(color, mul3(color, 0.12f), terrain);
-    color = add3(color, mul3(make_float3(0.9f, 0.34f, 0.06f), plasma * smoke * params.smoke_absorption * 0.32f));
+    color = add3(color, mul3(ember_color, embers * 0.44f));
+    color = mul3(color, edge_focus * (1.0f - central_void * 0.58f));
+    color = mix3(color, mul3(color, 0.035f), terrain);
+    float rock = terrain * powf(fbm(make_float2(p.x * 8.0f + t * 0.01f, p.y * 8.0f), seed + 401ULL), 2.2f);
+    color = add3(color, mul3(make_float3(0.060f, 0.046f, 0.036f), rock * 0.55f));
+    color = add3(color, mul3(make_float3(1.7f, 0.48f, 0.07f), rim * (0.10f + plasma * 0.30f)));
+    color = add3(color, mul3(make_float3(0.75f, 0.24f, 0.045f), plasma * smoke * params.smoke_absorption * 0.18f));
 
     uint32_t index = y * params.width + x;
     hdr[index] = make_float4(color.x, color.y, color.z, 1.0f);

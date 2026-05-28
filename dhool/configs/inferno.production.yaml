@@ -26,38 +26,38 @@ simulation:
   advection_dissipation: 0.985
 
 plasma:
-  emission_strength: 5.5
-  filament_density: 1.2
+  emission_strength: 3.2
+  filament_density: 1.45
   core_temperature: 1.0
   edge_wrapping: 0.65
 
 particles:
-  count: 150000
-  size_min: 0.35
-  size_max: 1.8
+  count: 90000
+  size_min: 0.25
+  size_max: 1.25
   lifetime: 3.0
   flow_coupling: 0.95
   ember_brightness: 2.0
 
 smoke:
-  density: 0.75
-  scattering: 0.65
+  density: 1.1
+  scattering: 0.85
   absorption: 0.22
   color_cool: "#161719"
   color_warm: "#50413a"
 
 bloom:
-  threshold: 1.0
-  strength: 0.85
-  radius: 0.7
+  threshold: 1.15
+  strength: 0.58
+  radius: 0.55
   pyramid_levels: 6
 
 grade:
-  exposure: 0.0
+  exposure: -0.4
   contrast: 1.15
-  saturation: 1.05
-  black_point: 0.015
-  vignette: 0.4
+  saturation: 1.12
+  black_point: 0.018
+  vignette: 0.55
   grain: 0.01
 
 export:
@@ -67,4 +67,3 @@ export:
   crf: 18
   preset: medium
   output_dir: outputs/inferno_production
-
