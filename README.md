@@ -2,6 +2,12 @@
 
 `dhool` is the Rust/CUDA production renderer for deterministic cinematic inferno backgrounds.
 
+## Production preview
+
+<video src="./final.mp4" controls autoplay loop muted playsinline width="100%"></video>
+
+If your viewer doesn’t render the embed, open [`final.mp4`](./final.mp4) directly.
+
 The first implementation gate is CUDA feasibility:
 
 ```bash
