@@ -1,0 +1,70 @@
+scene:
+  name: inferno_production
+  seed: 781278
+  duration: 10.0
+  fps: 60.0
+
+render:
+  width: 1920
+  height: 1080
+  quality: final
+  internal_format: rgba16f
+
+backend:
+  preferred: cuda
+  require_gpu: true
+
+simulation:
+  field_width: 1024
+  field_height: 576
+  substeps: 2
+  velocity_decay: 0.996
+  vorticity: 0.45
+  buoyancy: 0.22
+  turbulence: 1.1
+  swirl: 0.85
+  advection_dissipation: 0.985
+
+plasma:
+  emission_strength: 5.5
+  filament_density: 1.2
+  core_temperature: 1.0
+  edge_wrapping: 0.65
+
+particles:
+  count: 150000
+  size_min: 0.35
+  size_max: 1.8
+  lifetime: 3.0
+  flow_coupling: 0.95
+  ember_brightness: 2.0
+
+smoke:
+  density: 0.75
+  scattering: 0.65
+  absorption: 0.22
+  color_cool: "#161719"
+  color_warm: "#50413a"
+
+bloom:
+  threshold: 1.0
+  strength: 0.85
+  radius: 0.7
+  pyramid_levels: 6
+
+grade:
+  exposure: 0.0
+  contrast: 1.15
+  saturation: 1.05
+  black_point: 0.015
+  vignette: 0.4
+  grain: 0.01
+
+export:
+  mode: both
+  sequence_format: png
+  video_codec: libx264
+  crf: 18
+  preset: medium
+  output_dir: outputs/inferno_production
+
