@@ -1,9 +1,0 @@
-cargo:rerun-if-changed=/home/radhey/random/dhoo;/dhool/crates/dhool-cuda/../../shaders/cuda/dhool_kernels.cu
-cargo:rerun-if-env-changed=CUDA_HOME
-cargo:rerun-if-env-changed=CUDA_PATH
-cargo:rustc-link-search=native=/home/radhey/random/dhoo;/dhool/target/debug/build/dhool-cuda-a3ae5e9c30cf405b/out
-cargo:rustc-link-lib=static=dhoolcuda
-cargo:rustc-link-lib=dylib=cudart
-cargo:rustc-link-lib=dylib=stdc++
-cargo:rustc-link-search=native=/opt/cuda/lib64
-cargo:rustc-link-arg=-Wl,-rpath,/opt/cuda/lib64
