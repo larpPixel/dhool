@@ -166,7 +166,6 @@ pub fn render_frame(config: &Config, frame_index: u32, total_frames: u32) -> Res
 pub fn known_limitations() -> Vec<String> {
     vec![
         "EXR sequence export is rejected until the HDR image sequence writer is added.".to_string(),
-        "Visible embers are deterministic field-driven CUDA particles; persistent particle buffers are the next refinement.".to_string(),
     ]
 }
 

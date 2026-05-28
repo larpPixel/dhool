@@ -83,6 +83,15 @@ struct BloomView {
     int level_count;
 };
 
+struct Particle {
+    float2 pos;
+    float2 vel;
+    float age;
+    float heat;
+    float size;
+    float alpha;
+};
+
 static_assert(sizeof(unsigned long long) == sizeof(uint64_t), "unexpected uint64 size");
 
 __device__ float clamp01(float v) {
@@ -190,6 +199,14 @@ __device__ float ridge(float v) {
     return 1.0f - fabsf(v * 2.0f - 1.0f);
 }
 
+__device__ float2 p_to_uv(float2 p, float aspect) {
+    return make_float2(p.x / aspect + 0.5f, 0.5f - p.y);
+}
+
+__device__ float2 uv_to_p(float2 uv, float aspect) {
+    return make_float2((uv.x - 0.5f) * aspect, 0.5f - uv.y);
+}
+
 __device__ float2 field_flow(float2 p, float t, uint64_t seed, const DhoolRenderParams& params) {
     float n1 = fbm(make_float2(p.x * 1.6f + t * 0.10f, p.y * 1.4f - t * 0.05f), seed + 17ULL);
     float n2 = fbm(make_float2(p.x * 2.4f - t * 0.07f, p.y * 2.1f + t * 0.09f), seed + 53ULL);
@@ -271,55 +288,67 @@ __device__ float smoke_layer(float2 p, float t, uint64_t seed, const DhoolRender
     return haze * depth * plasma_cut * params.smoke_density;
 }
 
-__device__ float particle_layer(
-    float2 uv,
-    float2 p,
-    float t,
-    uint64_t seed,
-    const DhoolRenderParams& params,
-    float aspect
-) {
-    float requested = sqrtf(fmaxf(static_cast<float>(params.particles_count), 1.0f));
-    float cells_x = fminf(240.0f, fmaxf(56.0f, requested * 0.42f));
-    float cells_y = cells_x / aspect;
-    float2 q = make_float2(uv.x * cells_x, uv.y * cells_y);
-    int cx = static_cast<int>(floorf(q.x));
-    int cy = static_cast<int>(floorf(q.y));
-    float acc = 0.0f;
-    for (int oy = -1; oy <= 1; ++oy) {
-        for (int ox = -1; ox <= 1; ++ox) {
-            int gx = cx + ox;
-            int gy = cy + oy;
-            uint64_t cell_seed = seed ^ (static_cast<uint64_t>(gx) * 0x632be59bd9b4e019ULL) ^ (static_cast<uint64_t>(gy) * 0x9e3779b97f4a7c15ULL);
-            float hx = hash_u64_to_unit(cell_seed + 11ULL);
-            float hy = hash_u64_to_unit(cell_seed + 19ULL);
-            float heat = hash_u64_to_unit(cell_seed + 29ULL);
-            float phase = hash_u64_to_unit(cell_seed + 41ULL);
-            float age = fmodf(phase + t / fmaxf(params.particles_lifetime, 0.01f), 1.0f);
-            float2 pos_uv = make_float2((static_cast<float>(gx) + hx) / cells_x, (static_cast<float>(gy) + hy) / cells_y);
-            float2 pos_p = make_float2((pos_uv.x - 0.5f) * aspect, 0.5f - pos_uv.y);
-            float spawn = plasma_mask(pos_p, t - age * 0.32f, seed + 997ULL, params);
-            if (spawn < 0.06f && heat < 0.72f) {
-                continue;
-            }
-            float2 flow = field_flow(pos_p, t - age * 0.45f, seed + 991ULL, params);
-            pos_uv.x += flow.x * params.particles_flow_coupling * age * 0.035f / aspect;
-            pos_uv.y -= flow.y * params.particles_flow_coupling * age * 0.035f;
-            float2 d = make_float2(uv.x - pos_uv.x, uv.y - pos_uv.y);
-            float2 dir = normalize2(make_float2(flow.x / aspect, -flow.y));
-            float along = dot2(d, dir);
-            float cross = dot2(d, make_float2(-dir.y, dir.x));
-            float size_px = params.particles_size_min + (params.particles_size_max - params.particles_size_min) * heat;
-            float radius = size_px / 1080.0f;
-            float streak = expf(-(cross * cross) / (radius * radius * 1.35f) - (along * along) / (radius * radius * 7.5f));
-            float life = smooth(saturate(age * 5.0f)) * smooth(saturate((1.0f - age) * 2.8f));
-            acc += streak * life * (0.16f + heat * 0.72f) * saturate(spawn * 1.55f);
-        }
-    }
-    return acc * params.particles_ember_brightness;
+__device__ float sample_scalar_field(const float* field, int w, int h, float2 uv) {
+    float px = saturate(uv.x) * static_cast<float>(w - 1);
+    float py = saturate(uv.y) * static_cast<float>(h - 1);
+    int x0 = static_cast<int>(floorf(px));
+    int y0 = static_cast<int>(floorf(py));
+    int x1 = min(w - 1, x0 + 1);
+    int y1 = min(h - 1, y0 + 1);
+    float tx = px - floorf(px);
+    float ty = py - floorf(py);
+    float a = field[y0 * w + x0];
+    float b = field[y0 * w + x1];
+    float c = field[y1 * w + x0];
+    float d = field[y1 * w + x1];
+    float ab = a + (b - a) * tx;
+    float cd = c + (d - c) * tx;
+    return ab + (cd - ab) * ty;
 }
 
-__global__ void render_hdr_kernel(float4* hdr, DhoolRenderParams params) {
+__device__ float2 sample_velocity_field(const float2* field, int w, int h, float2 uv) {
+    float px = saturate(uv.x) * static_cast<float>(w - 1);
+    float py = saturate(uv.y) * static_cast<float>(h - 1);
+    int x0 = static_cast<int>(floorf(px));
+    int y0 = static_cast<int>(floorf(py));
+    int x1 = min(w - 1, x0 + 1);
+    int y1 = min(h - 1, y0 + 1);
+    float tx = px - floorf(px);
+    float ty = py - floorf(py);
+    float2 a = field[y0 * w + x0];
+    float2 b = field[y0 * w + x1];
+    float2 c = field[y1 * w + x0];
+    float2 d = field[y1 * w + x1];
+    float2 ab = make_float2(a.x + (b.x - a.x) * tx, a.y + (b.y - a.y) * tx);
+    float2 cd = make_float2(c.x + (d.x - c.x) * tx, c.y + (d.y - c.y) * tx);
+    return make_float2(ab.x + (cd.x - ab.x) * ty, ab.y + (cd.y - ab.y) * ty);
+}
+
+__global__ void build_fields_kernel(float2* velocity, float* density, float* temperature, DhoolRenderParams params) {
+    uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= params.field_width || y >= params.field_height) {
+        return;
+    }
+    float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
+    float2 uv = make_float2((static_cast<float>(x) + 0.5f) / params.field_width, (static_cast<float>(y) + 0.5f) / params.field_height);
+    float2 p = uv_to_p(uv, aspect);
+    float t = params.time_seconds;
+    uint64_t seed = params.seed + static_cast<uint64_t>(params.frame_index) * 17ULL;
+    uint32_t index = y * params.field_width + x;
+    float plasma = plasma_mask(p, t, seed, params);
+    velocity[index] = field_flow(p, t, seed, params);
+    density[index] = smoke_layer(p, t, seed, params, plasma);
+    temperature[index] = plasma;
+}
+
+__global__ void render_hdr_kernel(
+    float4* hdr,
+    const float2* velocity,
+    const float* density,
+    const float* temperature,
+    DhoolRenderParams params
+) {
     uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= params.width || y >= params.height) {
@@ -332,14 +361,14 @@ __global__ void render_hdr_kernel(float4* hdr, DhoolRenderParams params) {
     float t = params.time_seconds;
     uint64_t seed = params.seed + static_cast<uint64_t>(params.frame_index) * 17ULL;
 
-    float plasma = plasma_mask(p, t, seed, params);
-    float smoke = smoke_layer(p, t, seed, params, plasma);
-    float embers = particle_layer(uv, p, t, seed, params, aspect);
+    float plasma = sample_scalar_field(temperature, params.field_width, params.field_height, uv);
+    float smoke = sample_scalar_field(density, params.field_width, params.field_height, uv);
+    float2 flow = sample_velocity_field(velocity, params.field_width, params.field_height, uv);
     float terrain = terrain_mask(p, t, seed);
     float rim = terrain_rim(p, t, seed);
 
-    float central_void = expf(-((p.x * p.x) * 3.0f + (p.y - 0.15f) * (p.y - 0.15f) * 7.0f));
-    float edge_focus = 0.72f + 0.28f * smooth(saturate((fabsf(p.x) - 0.10f) * 2.0f));
+    float central_void = expf(-((p.x * p.x) * 3.0f + (p.y - 0.15f + flow.y * 0.02f) * (p.y - 0.15f + flow.y * 0.02f) * 7.0f));
+    float edge_focus = 0.72f + 0.28f * smooth(saturate((fabsf(p.x + flow.x * 0.01f) - 0.10f) * 2.0f));
     float hot = powf(saturate(plasma), 1.18f) * params.plasma_emission_strength * (0.20f + params.plasma_core_temperature * 0.22f);
     float3 hot_core = make_float3(4.6f, 1.45f, 0.20f);
     float3 hot_edge = make_float3(1.8f, 0.32f, 0.055f);
@@ -352,7 +381,6 @@ __global__ void render_hdr_kernel(float4* hdr, DhoolRenderParams params) {
     float3 color = background;
     color = add3(color, mul3(smoke_color, smoke * (0.55f + params.smoke_scattering * 0.50f)));
     color = add3(color, mul3(mix3(hot_edge, hot_core, saturate(plasma * 1.4f)), hot));
-    color = add3(color, mul3(ember_color, embers * 0.44f));
     color = mul3(color, edge_focus * (1.0f - central_void * 0.58f));
     color = mix3(color, mul3(color, 0.035f), terrain);
     float rock = terrain * powf(fbm(make_float2(p.x * 8.0f + t * 0.01f, p.y * 8.0f), seed + 401ULL), 2.2f);
@@ -362,6 +390,92 @@ __global__ void render_hdr_kernel(float4* hdr, DhoolRenderParams params) {
 
     uint32_t index = y * params.width + x;
     hdr[index] = make_float4(color.x, color.y, color.z, 1.0f);
+}
+
+__global__ void init_particles_kernel(
+    Particle* particles,
+    const float2* velocity,
+    const float* temperature,
+    DhoolRenderParams params
+) {
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= params.particles_count) {
+        return;
+    }
+    float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
+    uint64_t seed = params.seed ^ (static_cast<uint64_t>(id) * 0x9e3779b97f4a7c15ULL);
+    float hx = hash_u64_to_unit(seed + 11ULL);
+    float hy = hash_u64_to_unit(seed + 17ULL);
+    float heat = hash_u64_to_unit(seed + 23ULL);
+    float phase = hash_u64_to_unit(seed + 29ULL);
+    float age = fmodf(phase + params.time_seconds / fmaxf(params.particles_lifetime, 0.01f), 1.0f);
+    float2 uv = make_float2(hx, hy);
+    float2 pos = uv_to_p(uv, aspect);
+    float2 vel = make_float2(0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i) {
+        float2 flow = sample_velocity_field(velocity, params.field_width, params.field_height, p_to_uv(pos, aspect));
+        vel = flow;
+        pos.x += flow.x * params.particles_flow_coupling * age * 0.018f;
+        pos.y += flow.y * params.particles_flow_coupling * age * 0.018f;
+    }
+    float spawn = sample_scalar_field(temperature, params.field_width, params.field_height, p_to_uv(pos, aspect));
+    float life = smooth(saturate(age * 5.0f)) * smooth(saturate((1.0f - age) * 2.8f));
+    particles[id].pos = pos;
+    particles[id].vel = vel;
+    particles[id].age = age;
+    particles[id].heat = heat;
+    particles[id].size = params.particles_size_min + (params.particles_size_max - params.particles_size_min) * heat;
+    particles[id].alpha = life * saturate((spawn - 0.018f) * 4.5f) * (0.30f + heat * 0.70f);
+}
+
+__global__ void render_particles_kernel(float4* hdr, const Particle* particles, DhoolRenderParams params) {
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= params.particles_count) {
+        return;
+    }
+    Particle particle = particles[id];
+    if (particle.alpha <= 0.001f) {
+        return;
+    }
+    float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
+    float2 uv = p_to_uv(particle.pos, aspect);
+    if (uv.x < -0.02f || uv.x > 1.02f || uv.y < -0.02f || uv.y > 1.02f) {
+        return;
+    }
+    float px = uv.x * params.width;
+    float py = uv.y * params.height;
+    float radius_px = fmaxf(0.35f, particle.size);
+    int extent = static_cast<int>(ceilf(radius_px * 4.0f));
+    float2 dir = normalize2(make_float2(particle.vel.x / aspect, -particle.vel.y));
+    if (fabsf(dir.x) + fabsf(dir.y) < 0.001f) {
+        dir = make_float2(1.0f, 0.0f);
+    }
+    float3 ember_color = make_float3(2.9f, 0.78f, 0.13f);
+    float strength = params.particles_ember_brightness * particle.alpha * 0.12f;
+    int center_x = static_cast<int>(floorf(px));
+    int center_y = static_cast<int>(floorf(py));
+    for (int oy = -extent; oy <= extent; ++oy) {
+        int y = center_y + oy;
+        if (y < 0 || y >= static_cast<int>(params.height)) {
+            continue;
+        }
+        for (int ox = -extent; ox <= extent; ++ox) {
+            int x = center_x + ox;
+            if (x < 0 || x >= static_cast<int>(params.width)) {
+                continue;
+            }
+            float2 d = make_float2(static_cast<float>(ox) / params.width, static_cast<float>(oy) / params.height);
+            float along = dot2(d, dir);
+            float cross = dot2(d, make_float2(-dir.y, dir.x));
+            float radius_uv = radius_px / fminf(static_cast<float>(params.width), static_cast<float>(params.height));
+            float intensity = expf(-(cross * cross) / (radius_uv * radius_uv * 1.2f) - (along * along) / (radius_uv * radius_uv * 6.0f));
+            intensity *= strength;
+            uint32_t index = static_cast<uint32_t>(y) * params.width + static_cast<uint32_t>(x);
+            atomicAdd(&hdr[index].x, ember_color.x * intensity);
+            atomicAdd(&hdr[index].y, ember_color.y * intensity);
+            atomicAdd(&hdr[index].z, ember_color.z * intensity);
+        }
+    }
 }
 
 __global__ void threshold_downsample_kernel(
@@ -570,8 +684,13 @@ extern "C" int dhool_cuda_render_rgba8(
     }
 
     const size_t pixels = static_cast<size_t>(params->width) * static_cast<size_t>(params->height);
+    const size_t field_pixels = static_cast<size_t>(params->field_width) * static_cast<size_t>(params->field_height);
     float4* hdr = nullptr;
     uchar4* ldr = nullptr;
+    float2* velocity = nullptr;
+    float* density = nullptr;
+    float* temperature = nullptr;
+    Particle* particles = nullptr;
     float4* bloom_levels[8] {};
     int bloom_w[8] {};
     int bloom_h[8] {};
@@ -589,6 +708,42 @@ extern "C" int dhool_cuda_render_rgba8(
         set_error(report, err, "cudaMalloc ldr");
         return 0;
     }
+    err = cudaMalloc(reinterpret_cast<void**>(&velocity), field_pixels * sizeof(float2));
+    if (err != cudaSuccess) {
+        cudaFree(ldr);
+        cudaFree(hdr);
+        set_error(report, err, "cudaMalloc velocity field");
+        return 0;
+    }
+    err = cudaMalloc(reinterpret_cast<void**>(&density), field_pixels * sizeof(float));
+    if (err != cudaSuccess) {
+        cudaFree(velocity);
+        cudaFree(ldr);
+        cudaFree(hdr);
+        set_error(report, err, "cudaMalloc density field");
+        return 0;
+    }
+    err = cudaMalloc(reinterpret_cast<void**>(&temperature), field_pixels * sizeof(float));
+    if (err != cudaSuccess) {
+        cudaFree(density);
+        cudaFree(velocity);
+        cudaFree(ldr);
+        cudaFree(hdr);
+        set_error(report, err, "cudaMalloc temperature field");
+        return 0;
+    }
+    if (params->particles_count > 0) {
+        err = cudaMalloc(reinterpret_cast<void**>(&particles), static_cast<size_t>(params->particles_count) * sizeof(Particle));
+        if (err != cudaSuccess) {
+            cudaFree(temperature);
+            cudaFree(density);
+            cudaFree(velocity);
+            cudaFree(ldr);
+            cudaFree(hdr);
+            set_error(report, err, "cudaMalloc particle buffer");
+            return 0;
+        }
+    }
 
     int previous_w = static_cast<int>(params->width);
     int previous_h = static_cast<int>(params->height);
@@ -600,6 +755,10 @@ extern "C" int dhool_cuda_render_rgba8(
             for (int j = 0; j < i; ++j) {
                 cudaFree(bloom_levels[j]);
             }
+            cudaFree(particles);
+            cudaFree(temperature);
+            cudaFree(density);
+            cudaFree(velocity);
             cudaFree(ldr);
             cudaFree(hdr);
             set_error(report, err, "cudaMalloc bloom level");
@@ -620,12 +779,35 @@ extern "C" int dhool_cuda_render_rgba8(
 
     dim3 block(16, 16);
     dim3 full_grid((params->width + block.x - 1) / block.x, (params->height + block.y - 1) / block.y);
+    dim3 field_grid((params->field_width + block.x - 1) / block.x, (params->field_height + block.y - 1) / block.y);
     cudaEventRecord(gpu_start);
-    render_hdr_kernel<<<full_grid, block>>>(hdr, *params);
+    build_fields_kernel<<<field_grid, block>>>(velocity, density, temperature, *params);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        set_error(report, err, "build_fields_kernel");
+        goto cleanup;
+    }
+    render_hdr_kernel<<<full_grid, block>>>(hdr, velocity, density, temperature, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "render_hdr_kernel");
         goto cleanup;
+    }
+    if (params->particles_count > 0) {
+        dim3 particle_block(256);
+        dim3 particle_grid((params->particles_count + particle_block.x - 1) / particle_block.x);
+        init_particles_kernel<<<particle_grid, particle_block>>>(particles, velocity, temperature, *params);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            set_error(report, err, "init_particles_kernel");
+            goto cleanup;
+        }
+        render_particles_kernel<<<particle_grid, particle_block>>>(hdr, particles, *params);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            set_error(report, err, "render_particles_kernel");
+            goto cleanup;
+        }
     }
 
     for (int i = 0; i < level_count; ++i) {
@@ -685,6 +867,10 @@ cleanup:
     for (int i = 0; i < level_count; ++i) {
         cudaFree(bloom_levels[i]);
     }
+    cudaFree(particles);
+    cudaFree(temperature);
+    cudaFree(density);
+    cudaFree(velocity);
     cudaFree(ldr);
     cudaFree(hdr);
     return report->status;
