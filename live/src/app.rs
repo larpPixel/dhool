@@ -21,6 +21,7 @@ pub struct LiveApp {
     response_rx: Receiver<RenderResponse>,
     texture: Option<TextureHandle>,
     preview_scale: f32,
+    preview_field_scale: f32,
     frame_index: u32,
     playing: bool,
     max_gpu: bool,
@@ -53,7 +54,8 @@ impl LiveApp {
             render_tx,
             response_rx,
             texture: None,
-            preview_scale: 0.5,
+            preview_scale: 1.0,
+            preview_field_scale: 0.5,
             frame_index: 0,
             playing: false,
             max_gpu: true,
@@ -83,6 +85,14 @@ impl LiveApp {
                     }
                     if request_id < self.displayed_request_id {
                         continue;
+                    }
+                    if self.playing && self.max_gpu {
+                        let previous_frame_index = self.frame_index;
+                        if self.advance_one_frame()
+                            && (self.frame_index != previous_frame_index || self.playing)
+                        {
+                            self.queue_render();
+                        }
                     }
                     let width = frame.width;
                     let height = frame.height;
@@ -155,6 +165,12 @@ impl LiveApp {
             scaled_dimension(self.config.render.width, self.preview_scale);
         preview_config.render.height =
             scaled_dimension(self.config.render.height, self.preview_scale);
+        preview_config.simulation.field_width =
+            scaled_dimension(self.config.simulation.field_width, self.preview_field_scale);
+        preview_config.simulation.field_height = scaled_dimension(
+            self.config.simulation.field_height,
+            self.preview_field_scale,
+        );
 
         if let Err(err) = preview_config.validate() {
             self.error = Some(err.to_string());
@@ -288,7 +304,12 @@ impl LiveApp {
             .width_range(280.0..=460.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    changed |= panels::draw_all(ui, &mut self.config, &mut self.preview_scale);
+                    changed |= panels::draw_all(
+                        ui,
+                        &mut self.config,
+                        &mut self.preview_scale,
+                        &mut self.preview_field_scale,
+                    );
                 });
             });
         changed
@@ -366,10 +387,8 @@ impl LiveApp {
 
 impl eframe::App for LiveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let rendered_frame = self.receive_frames(ctx);
-        let playback_changed = if self.playing && self.max_gpu && rendered_frame {
-            self.advance_one_frame()
-        } else if self.playing && !self.max_gpu {
+        self.receive_frames(ctx);
+        let playback_changed = if self.playing && !self.max_gpu {
             self.advance_playback_realtime()
         } else {
             false

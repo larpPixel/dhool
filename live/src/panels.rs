@@ -3,12 +3,17 @@ use dhool_config::{
 };
 use eframe::egui::{self, Color32, DragValue, Ui};
 
-pub fn draw_all(ui: &mut Ui, config: &mut Config, preview_scale: &mut f32) -> bool {
+pub fn draw_all(
+    ui: &mut Ui,
+    config: &mut Config,
+    preview_scale: &mut f32,
+    preview_field_scale: &mut f32,
+) -> bool {
     ui.spacing_mut().slider_width = 180.0;
 
     let mut changed = false;
     changed |= scene_panel(ui, config);
-    changed |= render_panel(ui, config, preview_scale);
+    changed |= render_panel(ui, config, preview_scale, preview_field_scale);
     changed |= backend_panel(ui, config);
     changed |= simulation_panel(ui, config);
     changed |= plasma_panel(ui, config);
@@ -44,13 +49,21 @@ fn scene_panel(ui: &mut Ui, config: &mut Config) -> bool {
     changed
 }
 
-fn render_panel(ui: &mut Ui, config: &mut Config, preview_scale: &mut f32) -> bool {
+fn render_panel(
+    ui: &mut Ui,
+    config: &mut Config,
+    preview_scale: &mut f32,
+    preview_field_scale: &mut f32,
+) -> bool {
     let mut changed = false;
     egui::CollapsingHeader::new("Render")
         .default_open(true)
         .show(ui, |ui| {
             changed |= ui
                 .add(egui::Slider::new(preview_scale, 0.25..=1.0).text("preview scale"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(preview_field_scale, 0.25..=1.0).text("field scale"))
                 .changed();
             changed |= ui
                 .add(

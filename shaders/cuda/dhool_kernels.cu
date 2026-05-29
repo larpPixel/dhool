@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 extern "C" {
 
@@ -99,6 +100,35 @@ struct Particle {
 };
 
 static_assert(sizeof(unsigned long long) == sizeof(uint64_t), "unexpected uint64 size");
+
+struct DeviceBuffer {
+    void* ptr = nullptr;
+    size_t capacity = 0;
+};
+
+struct HostBuffer {
+    void* ptr = nullptr;
+    size_t capacity = 0;
+};
+
+struct RenderCache {
+    DeviceBuffer hdr;
+    DeviceBuffer ldr;
+    DeviceBuffer velocity;
+    DeviceBuffer density;
+    DeviceBuffer temperature;
+    DeviceBuffer particles;
+    DeviceBuffer bloom_levels[8];
+    HostBuffer readback;
+    cudaEvent_t gpu_start {};
+    cudaEvent_t gpu_stop {};
+    cudaEvent_t copy_start {};
+    cudaEvent_t copy_stop {};
+    bool events_ready = false;
+};
+
+std::mutex g_render_cache_mutex;
+RenderCache g_render_cache;
 
 __device__ float clamp01(float v) {
     return fminf(1.0f, fmaxf(0.0f, v));
@@ -757,6 +787,78 @@ void set_error(DhoolRenderReport* report, cudaError_t error, const char* context
     std::snprintf(report->error_message, sizeof(report->error_message), "%s: %s", context, cudaGetErrorString(error));
 }
 
+bool ensure_device_buffer(DeviceBuffer& buffer, size_t bytes, DhoolRenderReport* report, const char* context) {
+    if (bytes == 0) {
+        return true;
+    }
+    if (buffer.ptr != nullptr && buffer.capacity >= bytes) {
+        return true;
+    }
+
+    void* next = nullptr;
+    cudaError_t err = cudaMalloc(&next, bytes);
+    if (err != cudaSuccess) {
+        set_error(report, err, context);
+        return false;
+    }
+    if (buffer.ptr != nullptr) {
+        cudaFree(buffer.ptr);
+    }
+    buffer.ptr = next;
+    buffer.capacity = bytes;
+    return true;
+}
+
+bool ensure_host_buffer(HostBuffer& buffer, size_t bytes, DhoolRenderReport* report, const char* context) {
+    if (bytes == 0) {
+        return true;
+    }
+    if (buffer.ptr != nullptr && buffer.capacity >= bytes) {
+        return true;
+    }
+
+    void* next = nullptr;
+    cudaError_t err = cudaHostAlloc(&next, bytes, cudaHostAllocPortable);
+    if (err != cudaSuccess) {
+        set_error(report, err, context);
+        return false;
+    }
+    if (buffer.ptr != nullptr) {
+        cudaFreeHost(buffer.ptr);
+    }
+    buffer.ptr = next;
+    buffer.capacity = bytes;
+    return true;
+}
+
+bool ensure_events(RenderCache& cache, DhoolRenderReport* report) {
+    if (cache.events_ready) {
+        return true;
+    }
+    cudaError_t err = cudaEventCreate(&cache.gpu_start);
+    if (err != cudaSuccess) {
+        set_error(report, err, "cudaEventCreate gpu_start");
+        return false;
+    }
+    err = cudaEventCreate(&cache.gpu_stop);
+    if (err != cudaSuccess) {
+        set_error(report, err, "cudaEventCreate gpu_stop");
+        return false;
+    }
+    err = cudaEventCreate(&cache.copy_start);
+    if (err != cudaSuccess) {
+        set_error(report, err, "cudaEventCreate copy_start");
+        return false;
+    }
+    err = cudaEventCreate(&cache.copy_stop);
+    if (err != cudaSuccess) {
+        set_error(report, err, "cudaEventCreate copy_stop");
+        return false;
+    }
+    cache.events_ready = true;
+    return true;
+}
+
 extern "C" int dhool_cuda_device_info(DhoolCudaDeviceInfo* out) {
     if (out == nullptr) {
         return 0;
@@ -810,102 +912,50 @@ extern "C" int dhool_cuda_render_rgba8(
 
     const size_t pixels = static_cast<size_t>(params->width) * static_cast<size_t>(params->height);
     const size_t field_pixels = static_cast<size_t>(params->field_width) * static_cast<size_t>(params->field_height);
-    float4* hdr = nullptr;
-    uchar4* ldr = nullptr;
-    float2* velocity = nullptr;
-    float* density = nullptr;
-    float* temperature = nullptr;
-    Particle* particles = nullptr;
+    const size_t rgba_bytes = pixels * sizeof(uchar4);
+    std::lock_guard<std::mutex> lock(g_render_cache_mutex);
+    RenderCache& cache = g_render_cache;
+    if (!ensure_events(cache, report)
+        || !ensure_device_buffer(cache.hdr, pixels * sizeof(float4), report, "cudaMalloc hdr")
+        || !ensure_device_buffer(cache.ldr, rgba_bytes, report, "cudaMalloc ldr")
+        || !ensure_device_buffer(cache.velocity, field_pixels * sizeof(float2), report, "cudaMalloc velocity field")
+        || !ensure_device_buffer(cache.density, field_pixels * sizeof(float), report, "cudaMalloc density field")
+        || !ensure_device_buffer(cache.temperature, field_pixels * sizeof(float), report, "cudaMalloc temperature field")
+        || !ensure_device_buffer(cache.particles, static_cast<size_t>(params->particles_count) * sizeof(Particle), report, "cudaMalloc particle buffer")
+        || !ensure_host_buffer(cache.readback, rgba_bytes, report, "cudaHostAlloc readback buffer")) {
+        return 0;
+    }
+
+    float4* hdr = static_cast<float4*>(cache.hdr.ptr);
+    uchar4* ldr = static_cast<uchar4*>(cache.ldr.ptr);
+    float2* velocity = static_cast<float2*>(cache.velocity.ptr);
+    float* density = static_cast<float*>(cache.density.ptr);
+    float* temperature = static_cast<float*>(cache.temperature.ptr);
+    Particle* particles = static_cast<Particle*>(cache.particles.ptr);
     float4* bloom_levels[8] {};
     int bloom_w[8] {};
     int bloom_h[8] {};
     BloomView bloom {};
     int level_count = std::max(1, std::min(8, static_cast<int>(params->bloom_pyramid_levels)));
 
-    err = cudaMalloc(reinterpret_cast<void**>(&hdr), pixels * sizeof(float4));
-    if (err != cudaSuccess) {
-        set_error(report, err, "cudaMalloc hdr");
-        return 0;
-    }
-    err = cudaMalloc(reinterpret_cast<void**>(&ldr), pixels * sizeof(uchar4));
-    if (err != cudaSuccess) {
-        cudaFree(hdr);
-        set_error(report, err, "cudaMalloc ldr");
-        return 0;
-    }
-    err = cudaMalloc(reinterpret_cast<void**>(&velocity), field_pixels * sizeof(float2));
-    if (err != cudaSuccess) {
-        cudaFree(ldr);
-        cudaFree(hdr);
-        set_error(report, err, "cudaMalloc velocity field");
-        return 0;
-    }
-    err = cudaMalloc(reinterpret_cast<void**>(&density), field_pixels * sizeof(float));
-    if (err != cudaSuccess) {
-        cudaFree(velocity);
-        cudaFree(ldr);
-        cudaFree(hdr);
-        set_error(report, err, "cudaMalloc density field");
-        return 0;
-    }
-    err = cudaMalloc(reinterpret_cast<void**>(&temperature), field_pixels * sizeof(float));
-    if (err != cudaSuccess) {
-        cudaFree(density);
-        cudaFree(velocity);
-        cudaFree(ldr);
-        cudaFree(hdr);
-        set_error(report, err, "cudaMalloc temperature field");
-        return 0;
-    }
-    if (params->particles_count > 0) {
-        err = cudaMalloc(reinterpret_cast<void**>(&particles), static_cast<size_t>(params->particles_count) * sizeof(Particle));
-        if (err != cudaSuccess) {
-            cudaFree(temperature);
-            cudaFree(density);
-            cudaFree(velocity);
-            cudaFree(ldr);
-            cudaFree(hdr);
-            set_error(report, err, "cudaMalloc particle buffer");
-            return 0;
-        }
-    }
-
     int previous_w = static_cast<int>(params->width);
     int previous_h = static_cast<int>(params->height);
     for (int i = 0; i < level_count; ++i) {
         bloom_w[i] = std::max(1, previous_w / 2);
         bloom_h[i] = std::max(1, previous_h / 2);
-        err = cudaMalloc(reinterpret_cast<void**>(&bloom_levels[i]), static_cast<size_t>(bloom_w[i]) * static_cast<size_t>(bloom_h[i]) * sizeof(float4));
-        if (err != cudaSuccess) {
-            for (int j = 0; j < i; ++j) {
-                cudaFree(bloom_levels[j]);
-            }
-            cudaFree(particles);
-            cudaFree(temperature);
-            cudaFree(density);
-            cudaFree(velocity);
-            cudaFree(ldr);
-            cudaFree(hdr);
-            set_error(report, err, "cudaMalloc bloom level");
+        size_t bloom_bytes = static_cast<size_t>(bloom_w[i]) * static_cast<size_t>(bloom_h[i]) * sizeof(float4);
+        if (!ensure_device_buffer(cache.bloom_levels[i], bloom_bytes, report, "cudaMalloc bloom level")) {
             return 0;
         }
+        bloom_levels[i] = static_cast<float4*>(cache.bloom_levels[i].ptr);
         previous_w = bloom_w[i];
         previous_h = bloom_h[i];
     }
 
-    cudaEvent_t gpu_start {};
-    cudaEvent_t gpu_stop {};
-    cudaEvent_t copy_start {};
-    cudaEvent_t copy_stop {};
-    cudaEventCreate(&gpu_start);
-    cudaEventCreate(&gpu_stop);
-    cudaEventCreate(&copy_start);
-    cudaEventCreate(&copy_stop);
-
     dim3 block(16, 16);
     dim3 full_grid((params->width + block.x - 1) / block.x, (params->height + block.y - 1) / block.y);
     dim3 field_grid((params->field_width + block.x - 1) / block.x, (params->field_height + block.y - 1) / block.y);
-    cudaEventRecord(gpu_start);
+    cudaEventRecord(cache.gpu_start);
     build_fields_kernel<<<field_grid, block>>>(velocity, density, temperature, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -961,42 +1011,30 @@ extern "C" int dhool_cuda_render_rgba8(
         set_error(report, err, "final_grade_kernel");
         goto cleanup;
     }
-    cudaEventRecord(gpu_stop);
-    err = cudaEventSynchronize(gpu_stop);
+    cudaEventRecord(cache.gpu_stop);
+    err = cudaEventSynchronize(cache.gpu_stop);
     if (err != cudaSuccess) {
         set_error(report, err, "cudaEventSynchronize gpu_stop");
         goto cleanup;
     }
-    cudaEventElapsedTime(&report->gpu_ms, gpu_start, gpu_stop);
+    cudaEventElapsedTime(&report->gpu_ms, cache.gpu_start, cache.gpu_stop);
 
-    cudaEventRecord(copy_start);
-    err = cudaMemcpy(host_rgba, ldr, pixels * sizeof(uchar4), cudaMemcpyDeviceToHost);
+    cudaEventRecord(cache.copy_start);
+    err = cudaMemcpy(cache.readback.ptr, ldr, rgba_bytes, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         set_error(report, err, "cudaMemcpy readback");
         goto cleanup;
     }
-    cudaEventRecord(copy_stop);
-    err = cudaEventSynchronize(copy_stop);
+    cudaEventRecord(cache.copy_stop);
+    err = cudaEventSynchronize(cache.copy_stop);
     if (err != cudaSuccess) {
         set_error(report, err, "cudaEventSynchronize copy_stop");
         goto cleanup;
     }
-    cudaEventElapsedTime(&report->readback_ms, copy_start, copy_stop);
+    cudaEventElapsedTime(&report->readback_ms, cache.copy_start, cache.copy_stop);
+    std::memcpy(host_rgba, cache.readback.ptr, rgba_bytes);
     report->status = 1;
 
 cleanup:
-    cudaEventDestroy(gpu_start);
-    cudaEventDestroy(gpu_stop);
-    cudaEventDestroy(copy_start);
-    cudaEventDestroy(copy_stop);
-    for (int i = 0; i < level_count; ++i) {
-        cudaFree(bloom_levels[i]);
-    }
-    cudaFree(particles);
-    cudaFree(temperature);
-    cudaFree(density);
-    cudaFree(velocity);
-    cudaFree(ldr);
-    cudaFree(hdr);
     return report->status;
 }
