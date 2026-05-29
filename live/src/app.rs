@@ -23,12 +23,16 @@ pub struct LiveApp {
     preview_scale: f32,
     frame_index: u32,
     playing: bool,
+    max_gpu: bool,
+    target_preview_fps: f32,
     loop_playback: bool,
     last_play_tick: Instant,
+    last_submit_at: Instant,
     latest_timing: Option<FrameTiming>,
     next_request_id: u64,
-    latest_request_id: u64,
     displayed_request_id: u64,
+    in_flight_request_id: Option<u64>,
+    pending_render: bool,
     status: String,
     error: Option<String>,
 }
@@ -52,28 +56,39 @@ impl LiveApp {
             preview_scale: 0.5,
             frame_index: 0,
             playing: false,
+            max_gpu: true,
+            target_preview_fps: 60.0,
             loop_playback: true,
             last_play_tick: Instant::now(),
+            last_submit_at: Instant::now(),
             latest_timing: None,
             next_request_id: 0,
-            latest_request_id: 0,
             displayed_request_id: 0,
+            in_flight_request_id: None,
+            pending_render: false,
             status: "queued initial render".to_string(),
             error: None,
         };
-        app.request_render();
+        app.queue_render();
         app
     }
 
-    fn receive_frames(&mut self, ctx: &egui::Context) {
+    fn receive_frames(&mut self, ctx: &egui::Context) -> bool {
+        let mut rendered_frame = false;
         while let Ok(response) = self.response_rx.try_recv() {
             match response {
                 RenderResponse::Frame { request_id, frame } => {
-                    if request_id < self.latest_request_id {
+                    if Some(request_id) == self.in_flight_request_id {
+                        self.in_flight_request_id = None;
+                    }
+                    if request_id < self.displayed_request_id {
                         continue;
                     }
+                    let width = frame.width;
+                    let height = frame.height;
+                    let timing = frame.timing;
                     let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [frame.width as usize, frame.height as usize],
+                        [width as usize, height as usize],
                         &frame.rgba,
                     );
                     if let Some(texture) = self.texture.as_mut() {
@@ -85,13 +100,14 @@ impl LiveApp {
                             egui::TextureOptions::LINEAR,
                         ));
                     }
-                    self.latest_timing = Some(frame.timing);
+                    self.latest_timing = Some(timing);
                     self.displayed_request_id = request_id;
+                    rendered_frame = true;
                     self.status = format!(
                         "rendered {}x{} frame {}",
-                        frame.width,
-                        frame.height,
-                        frame.timing.frame_index + 1
+                        width,
+                        height,
+                        timing.frame_index + 1
                     );
                     self.error = None;
                 }
@@ -99,18 +115,38 @@ impl LiveApp {
                     request_id,
                     message,
                 } => {
-                    if request_id < self.latest_request_id {
+                    if Some(request_id) == self.in_flight_request_id {
+                        self.in_flight_request_id = None;
+                    }
+                    if request_id < self.displayed_request_id {
                         continue;
                     }
                     self.displayed_request_id = request_id;
+                    self.playing = false;
                     self.status = "render failed".to_string();
                     self.error = Some(message);
                 }
             }
         }
+        rendered_frame
     }
 
-    fn request_render(&mut self) {
+    fn queue_render(&mut self) {
+        self.pending_render = true;
+        self.try_submit_render();
+    }
+
+    fn try_submit_render(&mut self) {
+        if !self.pending_render || self.in_flight_request_id.is_some() {
+            return;
+        }
+        if !self.max_gpu && self.playing {
+            let target_period = Duration::from_secs_f32(1.0 / self.target_preview_fps.max(1.0));
+            if self.last_submit_at.elapsed() < target_period {
+                return;
+            }
+        }
+
         let frame_count = self.frame_count();
         self.frame_index = self.frame_index.min(frame_count.saturating_sub(1));
 
@@ -123,11 +159,13 @@ impl LiveApp {
         if let Err(err) = preview_config.validate() {
             self.error = Some(err.to_string());
             self.status = "config is invalid".to_string();
+            self.pending_render = false;
             return;
         }
 
         self.next_request_id += 1;
-        self.latest_request_id = self.next_request_id;
+        self.pending_render = false;
+        self.last_submit_at = Instant::now();
         let request = RenderRequest {
             request_id: self.next_request_id,
             config: preview_config,
@@ -137,6 +175,7 @@ impl LiveApp {
 
         match self.render_tx.send(request) {
             Ok(()) => {
+                self.in_flight_request_id = Some(self.next_request_id);
                 self.status = format!("rendering frame {}", self.frame_index + 1);
             }
             Err(err) => {
@@ -150,7 +189,11 @@ impl LiveApp {
         self.config.frame_count(None).max(1)
     }
 
-    fn advance_playback(&mut self) -> bool {
+    fn advance_one_frame(&mut self) -> bool {
+        self.advance_frames(1)
+    }
+
+    fn advance_playback_realtime(&mut self) -> bool {
         if !self.playing {
             self.last_play_tick = Instant::now();
             return false;
@@ -166,6 +209,14 @@ impl LiveApp {
 
         let steps = (elapsed.as_secs_f32() / frame_period.as_secs_f32()).floor() as u32;
         self.last_play_tick = now;
+        if steps == 0 {
+            return false;
+        }
+
+        self.advance_frames(steps)
+    }
+
+    fn advance_frames(&mut self, steps: u32) -> bool {
         if steps == 0 {
             return false;
         }
@@ -197,7 +248,7 @@ impl LiveApp {
                             self.source_path = Some(path);
                             self.frame_index = 0;
                             self.latest_timing = None;
-                            self.request_render();
+                            self.queue_render();
                         }
                         Ok(None) => {}
                         Err(message) => {
@@ -303,6 +354,8 @@ impl LiveApp {
                 self.config.scene.duration,
                 &mut self.playing,
                 &mut self.loop_playback,
+                &mut self.max_gpu,
+                &mut self.target_preview_fps,
                 self.latest_timing.as_ref(),
                 self.preview_scale,
             );
@@ -313,8 +366,17 @@ impl LiveApp {
 
 impl eframe::App for LiveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.receive_frames(ctx);
-        let playback_changed = self.advance_playback();
+        let rendered_frame = self.receive_frames(ctx);
+        let playback_changed = if self.playing && self.max_gpu && rendered_frame {
+            self.advance_one_frame()
+        } else if self.playing && !self.max_gpu {
+            self.advance_playback_realtime()
+        } else {
+            false
+        };
+        if playback_changed {
+            self.queue_render();
+        }
         self.draw_top_bar(ctx);
         let config_changed = self.draw_sidebar(ctx);
         self.draw_preview(ctx);
@@ -323,12 +385,20 @@ impl eframe::App for LiveApp {
         if config_changed {
             self.frame_index = self.frame_index.min(self.frame_count().saturating_sub(1));
         }
-        if config_changed || timeline_changed || playback_changed {
-            self.request_render();
+        if config_changed || timeline_changed {
+            self.queue_render();
+        } else if self.playing && self.max_gpu && self.in_flight_request_id.is_none() {
+            self.queue_render();
         }
+        self.try_submit_render();
 
-        if self.playing || self.displayed_request_id < self.latest_request_id {
-            ctx.request_repaint_after(Duration::from_millis(16));
+        if self.playing || self.pending_render || self.in_flight_request_id.is_some() {
+            let repaint_after = if self.max_gpu {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_millis(16)
+            };
+            ctx.request_repaint_after(repaint_after);
         }
     }
 }

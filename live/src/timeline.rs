@@ -9,6 +9,8 @@ pub fn draw(
     duration: f32,
     playing: &mut bool,
     loop_playback: &mut bool,
+    max_gpu: &mut bool,
+    target_preview_fps: &mut f32,
     timing: Option<&FrameTiming>,
     preview_scale: f32,
 ) -> bool {
@@ -20,8 +22,16 @@ pub fn draw(
         let play_label = if *playing { "Pause" } else { "Play" };
         if ui.button(play_label).clicked() {
             *playing = !*playing;
+            changed = true;
         }
         changed |= ui.checkbox(loop_playback, "Loop").changed();
+        changed |= ui.checkbox(max_gpu, "Max GPU").changed();
+        changed |= ui
+            .add_enabled(
+                !*max_gpu,
+                egui::Slider::new(target_preview_fps, 1.0..=240.0).text("Preview fps"),
+            )
+            .changed();
         changed |= ui
             .add(
                 egui::Slider::new(frame_index, 0..=last_frame)
