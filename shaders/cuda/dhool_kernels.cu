@@ -82,13 +82,6 @@ struct DhoolRenderParams {
 
 }
 
-struct BloomView {
-    const float4* levels[8];
-    int widths[8];
-    int heights[8];
-    int level_count;
-};
-
 struct Particle {
     float2 pos;
     float2 vel;
@@ -132,6 +125,7 @@ struct RenderCache {
     DeviceBuffer velocity;
     DeviceBuffer density;
     DeviceBuffer temperature;
+    DeviceBuffer terrain_ridge;
     DeviceBuffer particles;
     DeviceBuffer bloom_levels[8];
     HostBuffer readback;
@@ -149,6 +143,7 @@ struct RenderCache {
         velocity.release();
         density.release();
         temperature.release();
+        terrain_ridge.release();
         particles.release();
         for (int i = 0; i < 8; ++i) {
             bloom_levels[i].release();
@@ -296,9 +291,8 @@ __device__ float2 field_flow(float2 p, float t, uint64_t seed, const DhoolRender
     return add2(add2(mul2(curl, params.vorticity), mul2(lift, 0.42f)), mul2(orbital, 0.25f * params.swirl));
 }
 
-__device__ float plasma_mask(float2 p, float t, uint64_t seed, const DhoolRenderParams& params) {
+__device__ float plasma_mask(float2 p, float t, uint64_t seed, const DhoolRenderParams& params, float2 flow) {
     float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
-    float2 flow = field_flow(p, t, seed, params);
     float2 warped = add2(p, mul2(flow, 0.052f + params.plasma_edge_wrapping * 0.030f));
     warped.x += (fbm(make_float2(p.x * 2.0f, p.y * 2.0f + t * 0.045f), seed + 71ULL) - 0.5f) * 0.15f;
     warped.y += (fbm(make_float2(p.x * 2.8f - t * 0.060f, p.y * 2.0f), seed + 73ULL) - 0.5f) * 0.12f;
@@ -362,21 +356,18 @@ __device__ float terrain_ridge_y(float2 p, float t, uint64_t seed) {
     return terrain_base_y(x) + rock_noise;
 }
 
-__device__ float terrain_mask(float2 p, float t, uint64_t seed) {
-    float ridge_line = terrain_ridge_y(p, t, seed);
+__device__ float terrain_mask_from_ridge(float2 p, float ridge_line) {
     return smooth(saturate((ridge_line - p.y) * 28.0f));
 }
 
-__device__ float terrain_rim(float2 p, float t, uint64_t seed) {
-    float ridge_line = terrain_ridge_y(p, t, seed);
+__device__ float terrain_rim_from_ridge(float2 p, float t, uint64_t seed, float ridge_line) {
     float edge = expf(-fabsf(p.y - ridge_line) * 58.0f);
     float upper = smooth(saturate((p.y - ridge_line + 0.070f) * 11.0f));
     float broken = 0.65f + 0.35f * fbm(make_float2(p.x * 18.0f + t * 0.012f, p.y * 11.0f), seed + 229ULL);
     return edge * upper * broken;
 }
 
-__device__ float smoke_layer(float2 p, float t, uint64_t seed, const DhoolRenderParams& params, float plasma) {
-    float2 flow = field_flow(p, t, seed + 303ULL, params);
+__device__ float smoke_layer(float2 p, float t, uint64_t seed, const DhoolRenderParams& params, float plasma, float2 flow) {
     float2 advected = add2(p, mul2(flow, -0.26f * params.advection_dissipation));
     advected.y -= t * 0.018f;
     float broad = fbm(make_float2(advected.x * 1.05f, advected.y * 0.95f), seed + 307ULL);
@@ -438,10 +429,22 @@ __global__ void build_fields_kernel(float2* velocity, float* density, float* tem
     float t = params.time_seconds;
     uint64_t seed = params.seed;
     uint32_t index = y * params.field_width + x;
-    float plasma = plasma_mask(p, t, seed, params);
-    velocity[index] = field_flow(p, t, seed, params);
-    density[index] = smoke_layer(p, t, seed, params, plasma);
+    float2 flow = field_flow(p, t, seed, params);
+    float plasma = plasma_mask(p, t, seed, params, flow);
+    velocity[index] = flow;
+    density[index] = smoke_layer(p, t, seed, params, plasma, flow);
     temperature[index] = plasma;
+}
+
+__global__ void build_terrain_ridge_kernel(float* terrain_ridge, DhoolRenderParams params) {
+    uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= params.width) {
+        return;
+    }
+    float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
+    float uv_x = (static_cast<float>(x) + 0.5f) / params.width;
+    float p_x = (uv_x - 0.5f) * aspect;
+    terrain_ridge[x] = terrain_ridge_y(make_float2(p_x, 0.0f), params.time_seconds, params.seed);
 }
 
 __global__ void render_hdr_kernel(
@@ -449,6 +452,7 @@ __global__ void render_hdr_kernel(
     const float2* velocity,
     const float* density,
     const float* temperature,
+    const float* terrain_ridge,
     DhoolRenderParams params
 ) {
     uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -466,8 +470,8 @@ __global__ void render_hdr_kernel(
     float plasma = sample_scalar_field(temperature, params.field_width, params.field_height, uv);
     float smoke = sample_scalar_field(density, params.field_width, params.field_height, uv);
     float2 flow = sample_velocity_field(velocity, params.field_width, params.field_height, uv);
-    float terrain = terrain_mask(p, t, seed);
-    float rim = terrain_rim(p, t, seed);
+    float ridge_line = terrain_ridge[x];
+    float terrain = terrain_mask_from_ridge(p, ridge_line);
 
     float central_void = expf(-((p.x * p.x) * 3.8f + (p.y - 0.13f + flow.y * 0.018f) * (p.y - 0.13f + flow.y * 0.018f) * 8.5f));
     float edge_focus = 0.64f + 0.36f * smooth(saturate((fabsf(p.x + flow.x * 0.012f) - 0.08f) * 2.2f));
@@ -497,8 +501,14 @@ __global__ void render_hdr_kernel(
     color = add3(color, mul3(flame_color, hot * edge_focus * smoke_shadow));
     color = mul3(color, 1.0f - central_void * (0.48f + 0.12f * (1.0f - lower_depth)));
 
-    float rock = terrain * powf(fbm(make_float2(p.x * 9.5f + t * 0.004f, p.y * 9.0f), seed + 401ULL), 2.0f);
-    float crack = terrain * powf(saturate(ridge(fbm(make_float2(p.x * 22.0f, p.y * 16.0f - t * 0.003f), seed + 409ULL))), 4.0f);
+    float rim = 0.0f;
+    float rock = 0.0f;
+    float crack = 0.0f;
+    if (terrain > 0.001f) {
+        rim = terrain_rim_from_ridge(p, t, seed, ridge_line);
+        rock = terrain * powf(fbm(make_float2(p.x * 9.5f + t * 0.004f, p.y * 9.0f), seed + 401ULL), 2.0f);
+        crack = terrain * powf(saturate(ridge(fbm(make_float2(p.x * 22.0f, p.y * 16.0f - t * 0.003f), seed + 409ULL))), 4.0f);
+    }
     float terrain_cover = terrain * (0.94f + 0.05f * lower_depth);
     color = mix3(color, make_float3(0.0013f, 0.0014f, 0.0018f), terrain_cover);
     color = add3(color, mul3(make_float3(0.165f, 0.130f, 0.100f), rock * 0.82f));
@@ -752,7 +762,43 @@ __device__ float3 aces_tonemap(float3 x) {
     );
 }
 
-__global__ void final_grade_kernel(const float4* hdr, uchar4* out, BloomView bloom, DhoolRenderParams params) {
+__global__ void upsample_bloom_kernel(
+    float4* fine,
+    const float4* coarse,
+    int fine_w,
+    int fine_h,
+    int coarse_w,
+    int coarse_h,
+    float spread,
+    float weight
+) {
+    uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= static_cast<uint32_t>(fine_w) || y >= static_cast<uint32_t>(fine_h)) {
+        return;
+    }
+
+    float2 uv = make_float2((static_cast<float>(x) + 0.5f) / fine_w, (static_cast<float>(y) + 0.5f) / fine_h);
+    float3 center = sample_bloom_level(coarse, coarse_w, coarse_h, uv);
+    float3 east = sample_bloom_level(coarse, coarse_w, coarse_h, make_float2(uv.x + spread, uv.y));
+    float3 west = sample_bloom_level(coarse, coarse_w, coarse_h, make_float2(uv.x - spread, uv.y));
+    float3 north = sample_bloom_level(coarse, coarse_w, coarse_h, make_float2(uv.x, uv.y - spread));
+    float3 south = sample_bloom_level(coarse, coarse_w, coarse_h, make_float2(uv.x, uv.y + spread));
+    float3 upsampled = mul3(add3(add3(add3(add3(center, east), west), north), south), weight * 0.2f);
+    uint32_t index = y * fine_w + x;
+    float4 base = fine[index];
+    fine[index] = make_float4(base.x + upsampled.x, base.y + upsampled.y, base.z + upsampled.z, 1.0f);
+}
+
+__global__ void final_grade_kernel(
+    const float4* hdr,
+    const float4* bloom_composite,
+    int bloom_w,
+    int bloom_h,
+    float bloom_scale,
+    uchar4* out,
+    DhoolRenderParams params
+) {
     uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= params.width || y >= params.height) {
@@ -762,23 +808,9 @@ __global__ void final_grade_kernel(const float4* hdr, uchar4* out, BloomView blo
     float2 uv = make_float2((static_cast<float>(x) + 0.5f) / params.width, (static_cast<float>(y) + 0.5f) / params.height);
     float4 base4 = hdr[index];
     float3 color = make_float3(base4.x, base4.y, base4.z);
-    float radius_scale = 0.0015f + params.bloom_radius * 0.0025f;
-    float3 bloom_sum = make_float3(0.0f, 0.0f, 0.0f);
-    float weight_sum = 0.0f;
-    for (int i = 0; i < bloom.level_count; ++i) {
-        float spread = static_cast<float>(i + 1) * radius_scale;
-        float weight = powf(0.74f, static_cast<float>(i));
-        float3 center = sample_bloom_level(bloom.levels[i], bloom.widths[i], bloom.heights[i], uv);
-        float3 east = sample_bloom_level(bloom.levels[i], bloom.widths[i], bloom.heights[i], make_float2(uv.x + spread, uv.y));
-        float3 west = sample_bloom_level(bloom.levels[i], bloom.widths[i], bloom.heights[i], make_float2(uv.x - spread, uv.y));
-        float3 north = sample_bloom_level(bloom.levels[i], bloom.widths[i], bloom.heights[i], make_float2(uv.x, uv.y - spread));
-        float3 south = sample_bloom_level(bloom.levels[i], bloom.widths[i], bloom.heights[i], make_float2(uv.x, uv.y + spread));
-        float3 level = mul3(add3(add3(add3(add3(center, east), west), north), south), 0.2f);
-        bloom_sum = add3(bloom_sum, mul3(level, weight));
-        weight_sum += weight;
-    }
-    if (weight_sum > 0.0f) {
-        color = add3(color, mul3(bloom_sum, params.bloom_strength / weight_sum));
+    if (params.bloom_strength > 0.0f && bloom_composite != nullptr) {
+        float3 bloom = sample_bloom_level(bloom_composite, bloom_w, bloom_h, uv);
+        color = add3(color, mul3(bloom, bloom_scale));
     }
 
     color = mul3(color, exp2f(params.grade_exposure));
@@ -966,6 +998,7 @@ extern "C" int dhool_cuda_render_rgba8(
         || !ensure_device_buffer(cache.velocity, field_pixels * sizeof(float2), report, "cudaMalloc velocity field")
         || !ensure_device_buffer(cache.density, field_pixels * sizeof(float), report, "cudaMalloc density field")
         || !ensure_device_buffer(cache.temperature, field_pixels * sizeof(float), report, "cudaMalloc temperature field")
+        || !ensure_device_buffer(cache.terrain_ridge, static_cast<size_t>(params->width) * sizeof(float), report, "cudaMalloc terrain ridge")
         || !ensure_device_buffer(cache.particles, static_cast<size_t>(params->particles_count) * sizeof(Particle), report, "cudaMalloc particle buffer")
         || !ensure_host_buffer(cache.readback, rgba_bytes, report, "cudaHostAlloc readback buffer")) {
         return 0;
@@ -976,11 +1009,11 @@ extern "C" int dhool_cuda_render_rgba8(
     float2* velocity = static_cast<float2*>(cache.velocity.ptr);
     float* density = static_cast<float*>(cache.density.ptr);
     float* temperature = static_cast<float*>(cache.temperature.ptr);
+    float* terrain_ridge = static_cast<float*>(cache.terrain_ridge.ptr);
     Particle* particles = static_cast<Particle*>(cache.particles.ptr);
     float4* bloom_levels[8] {};
     int bloom_w[8] {};
     int bloom_h[8] {};
-    BloomView bloom {};
     int level_count = std::max(1, std::min(8, static_cast<int>(params->bloom_pyramid_levels)));
 
     int previous_w = static_cast<int>(params->width);
@@ -996,10 +1029,12 @@ extern "C" int dhool_cuda_render_rgba8(
         previous_w = bloom_w[i];
         previous_h = bloom_h[i];
     }
-
     dim3 block(16, 16);
     dim3 full_grid((params->width + block.x - 1) / block.x, (params->height + block.y - 1) / block.y);
     dim3 field_grid((params->field_width + block.x - 1) / block.x, (params->field_height + block.y - 1) / block.y);
+    float bloom_weight_sum = 1.0f;
+    float bloom_radius_scale = 0.0015f + params->bloom_radius * 0.0025f;
+    float bloom_scale = params->bloom_strength;
     cudaEventRecord(cache.gpu_start, cache.stream);
     build_fields_kernel<<<field_grid, block, 0, cache.stream>>>(velocity, density, temperature, *params);
     err = cudaGetLastError();
@@ -1007,7 +1042,17 @@ extern "C" int dhool_cuda_render_rgba8(
         set_error(report, err, "build_fields_kernel");
         goto cleanup;
     }
-    render_hdr_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, velocity, density, temperature, *params);
+    {
+        dim3 terrain_block(256);
+        dim3 terrain_grid((params->width + terrain_block.x - 1) / terrain_block.x);
+        build_terrain_ridge_kernel<<<terrain_grid, terrain_block, 0, cache.stream>>>(terrain_ridge, *params);
+    }
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        set_error(report, err, "build_terrain_ridge_kernel");
+        goto cleanup;
+    }
+    render_hdr_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, velocity, density, temperature, terrain_ridge, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "render_hdr_kernel");
@@ -1044,13 +1089,28 @@ extern "C" int dhool_cuda_render_rgba8(
         }
     }
 
-    bloom.level_count = level_count;
-    for (int i = 0; i < level_count; ++i) {
-        bloom.levels[i] = bloom_levels[i];
-        bloom.widths[i] = bloom_w[i];
-        bloom.heights[i] = bloom_h[i];
+    for (int i = level_count - 2; i >= 0; --i) {
+        float weight = powf(0.74f, static_cast<float>(i + 1));
+        bloom_weight_sum += weight;
+        float spread = static_cast<float>(i + 1) * bloom_radius_scale;
+        dim3 bloom_grid((bloom_w[i] + block.x - 1) / block.x, (bloom_h[i] + block.y - 1) / block.y);
+        upsample_bloom_kernel<<<bloom_grid, block, 0, cache.stream>>>(
+            bloom_levels[i],
+            bloom_levels[i + 1],
+            bloom_w[i],
+            bloom_h[i],
+            bloom_w[i + 1],
+            bloom_h[i + 1],
+            spread,
+            weight);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            set_error(report, err, "upsample_bloom_kernel");
+            goto cleanup;
+        }
     }
-    final_grade_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, ldr, bloom, *params);
+    bloom_scale = params->bloom_strength / fmaxf(bloom_weight_sum, 1.0e-4f);
+    final_grade_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, bloom_levels[0], bloom_w[0], bloom_h[0], bloom_scale, ldr, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "final_grade_kernel");

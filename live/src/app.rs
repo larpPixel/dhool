@@ -138,10 +138,7 @@ impl LiveApp {
             let width = frame.width;
             let height = frame.height;
             let timing = frame.timing;
-            let image = egui::ColorImage::from_rgba_unmultiplied(
-                [width as usize, height as usize],
-                &frame.rgba,
-            );
+            let image = color_image_from_opaque_rgba([width as usize, height as usize], frame.rgba);
             if let Some(texture) = self.texture.as_mut() {
                 texture.set(image, egui::TextureOptions::LINEAR);
             } else {
@@ -539,4 +536,29 @@ fn fit_size(content: Vec2, bounds: Vec2) -> Vec2 {
     }
     let scale = (bounds.x / content.x).min(bounds.y / content.y);
     content * scale
+}
+
+fn color_image_from_opaque_rgba(size: [usize; 2], rgba: Vec<u8>) -> egui::ColorImage {
+    let expected_bytes = size[0] * size[1] * 4;
+    assert_eq!(expected_bytes, rgba.len());
+
+    if std::mem::size_of::<egui::Color32>() != 4
+        || std::mem::align_of::<egui::Color32>() != 1
+        || rgba.capacity() % 4 != 0
+    {
+        return egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+    }
+
+    let mut rgba = std::mem::ManuallyDrop::new(rgba);
+    let pixel_count = expected_bytes / 4;
+    let pixel_capacity = rgba.capacity() / 4;
+    // CUDA writes opaque RGBA8, which is already valid `Color32` storage.
+    let pixels = unsafe {
+        Vec::from_raw_parts(
+            rgba.as_mut_ptr().cast::<egui::Color32>(),
+            pixel_count,
+            pixel_capacity,
+        )
+    };
+    egui::ColorImage { size, pixels }
 }

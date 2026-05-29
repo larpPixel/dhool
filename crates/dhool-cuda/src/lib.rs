@@ -294,6 +294,44 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires a CUDA device and renders full 1080p frames"]
+    fn benchmarks_1080p_cuda_render() {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/inferno.production.yaml");
+        let mut config = Config::load(path).expect("sample config loads");
+        config.render.width = 1920;
+        config.render.height = 1080;
+        config.validate().expect("1080p CUDA config validates");
+
+        let mut gpu_ms = 0.0;
+        let mut readback_ms = 0.0;
+        let mut total_ms = 0.0;
+        let frames = 24;
+        let warmup_frames = 12;
+        for frame_index in 0..frames {
+            let frame = render_frame(&config, frame_index, frames).expect("CUDA render failed");
+            println!(
+                "frame {frame_index}: gpu {:.3} ms readback {:.3} ms total {:.3} ms",
+                frame.timing.gpu_ms, frame.timing.readback_ms, frame.timing.total_ms
+            );
+            if frame_index >= warmup_frames {
+                gpu_ms += frame.timing.gpu_ms;
+                readback_ms += frame.timing.readback_ms;
+                total_ms += frame.timing.total_ms;
+            }
+        }
+
+        let measured = (frames - warmup_frames) as f32;
+        println!(
+            "avg after warmup: gpu {:.3} ms readback {:.3} ms total {:.3} ms fps {:.1}",
+            gpu_ms / measured,
+            readback_ms / measured,
+            total_ms / measured,
+            1000.0 / (total_ms / measured)
+        );
+    }
+
     fn small_cuda_config() -> Config {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/inferno.production.yaml");
