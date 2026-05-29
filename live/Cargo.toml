@@ -1,0 +1,19 @@
+[package]
+name = "dhool-live"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dhool-live"
+path = "src/main.rs"
+
+[dependencies]
+dhool-config = { path = "../crates/dhool-config" }
+dhool-core = { path = "../crates/dhool-core" }
+dhool-cuda = { path = "../crates/dhool-cuda" }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11"] }
+egui = "0.31"
+egui_extras = "0.31"
+rfd = "0.15"
+serde_yaml.workspace = true

@@ -5,6 +5,7 @@ members = [
     "crates/dhool-core",
     "crates/dhool-cuda",
     "crates/dhool-export",
+    "live",
 ]
 resolver = "3"
 
@@ -26,4 +27,3 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 tempfile = "3.10"
 thiserror = "2.0"
-
