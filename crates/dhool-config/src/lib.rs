@@ -100,6 +100,8 @@ pub struct PlasmaConfig {
     pub filament_density: f32,
     pub core_temperature: f32,
     pub edge_wrapping: f32,
+    pub color_core: String,
+    pub color_edge: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +313,8 @@ impl Config {
             "plasma.core_temperature",
         )?;
         range(self.plasma.edge_wrapping, 0.0, 4.0, "plasma.edge_wrapping")?;
+        parse_hex_color(&self.plasma.color_core)?;
+        parse_hex_color(&self.plasma.color_edge)?;
         require(
             self.particles.count <= 2_000_000,
             "particles.count is too high",
@@ -372,6 +376,14 @@ impl Config {
 
     pub fn smoke_warm_rgb(&self) -> Result<Rgb, ConfigError> {
         parse_hex_color(&self.smoke.color_warm)
+    }
+
+    pub fn plasma_core_rgb(&self) -> Result<Rgb, ConfigError> {
+        parse_hex_color(&self.plasma.color_core)
+    }
+
+    pub fn plasma_edge_rgb(&self) -> Result<Rgb, ConfigError> {
+        parse_hex_color(&self.plasma.color_edge)
     }
 }
 

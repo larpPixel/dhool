@@ -51,6 +51,8 @@ struct DhoolRenderParams {
     float plasma_filament_density;
     float plasma_core_temperature;
     float plasma_edge_wrapping;
+    float plasma_color_core[3];
+    float plasma_color_edge[3];
     uint32_t particles_count;
     float particles_size_min;
     float particles_size_max;
@@ -399,8 +401,8 @@ __global__ void render_hdr_kernel(
     float edge_focus = 0.64f + 0.36f * smooth(saturate((fabsf(p.x + flow.x * 0.012f) - 0.08f) * 2.2f));
     float lower_depth = smooth(saturate((-p.y + 0.16f) * 1.8f));
     float hot = powf(saturate(plasma), 1.34f) * params.plasma_emission_strength * (0.15f + params.plasma_core_temperature * 0.22f);
-    float3 hot_core = make_float3(4.55f, 1.22f, 0.24f);
-    float3 hot_edge = make_float3(1.80f, 0.42f, 0.10f);
+    float3 hot_core = make_float3(params.plasma_color_core[0], params.plasma_color_core[1], params.plasma_color_core[2]);
+    float3 hot_edge = make_float3(params.plasma_color_edge[0], params.plasma_color_edge[1], params.plasma_color_edge[2]);
     float3 cool_smoke = make_float3(params.smoke_color_cool[0], params.smoke_color_cool[1], params.smoke_color_cool[2]);
     float3 warm_smoke = make_float3(params.smoke_color_warm[0], params.smoke_color_warm[1], params.smoke_color_warm[2]);
     float3 smoke_color = mix3(cool_smoke, warm_smoke, saturate(plasma * params.smoke_scattering * 0.35f + lower_depth * 0.12f + 0.10f));
@@ -429,8 +431,8 @@ __global__ void render_hdr_kernel(
     color = mix3(color, make_float3(0.0013f, 0.0014f, 0.0018f), terrain_cover);
     color = add3(color, mul3(make_float3(0.165f, 0.130f, 0.100f), rock * 0.82f));
     color = add3(color, mul3(make_float3(0.40f, 0.22f, 0.090f), crack * rim * 0.82f));
-    color = add3(color, mul3(make_float3(2.10f, 0.58f, 0.085f), rim * (0.10f + plasma * 0.34f + smoke * 0.08f)));
-    color = add3(color, mul3(make_float3(0.82f, 0.25f, 0.050f), plasma * smoke * params.smoke_absorption * 0.22f));
+    color = add3(color, mul3(hot_edge, rim * 1.17f * (0.10f + plasma * 0.34f + smoke * 0.08f)));
+    color = add3(color, mul3(hot_edge, plasma * smoke * params.smoke_absorption * 0.12f * 0.46f));
     float foreground_shadow = smooth(saturate((-p.y - 0.10f) * 2.2f)) * (1.0f - terrain) * (1.0f - saturate(plasma * 1.7f));
     color = mul3(color, 1.0f - foreground_shadow * 0.55f);
 
@@ -501,7 +503,10 @@ __global__ void render_particles_kernel(float4* hdr, const Particle* particles, 
     if (fabsf(dir.x) + fabsf(dir.y) < 0.001f) {
         dir = make_float2(1.0f, 0.0f);
     }
-    float3 ember_color = make_float3(3.2f, 0.90f, 0.18f);
+    float3 ember_color = mix3(
+        make_float3(params.plasma_color_edge[0], params.plasma_color_edge[1], params.plasma_color_edge[2]),
+        make_float3(params.plasma_color_core[0], params.plasma_color_core[1], params.plasma_color_core[2]),
+        0.65f);
     float strength = params.particles_ember_brightness * particle.alpha * (0.070f + depth * 0.042f);
     int center_x = static_cast<int>(floorf(px));
     int center_y = static_cast<int>(floorf(py));

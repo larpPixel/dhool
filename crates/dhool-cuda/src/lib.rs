@@ -74,6 +74,8 @@ struct RawRenderParams {
     plasma_filament_density: f32,
     plasma_core_temperature: f32,
     plasma_edge_wrapping: f32,
+    plasma_color_core: [f32; 3],
+    plasma_color_edge: [f32; 3],
     particles_count: u32,
     particles_size_min: f32,
     particles_size_max: f32,
@@ -180,6 +182,12 @@ fn params_from_config(
     let warm = config
         .smoke_warm_rgb()
         .context("invalid smoke.color_warm")?;
+    let plasma_core = config
+        .plasma_core_rgb()
+        .context("invalid plasma.color_core")?;
+    let plasma_edge = config
+        .plasma_edge_rgb()
+        .context("invalid plasma.color_edge")?;
     Ok(RawRenderParams {
         width: config.render.width,
         height: config.render.height,
@@ -207,6 +215,8 @@ fn params_from_config(
         plasma_filament_density: config.plasma.filament_density,
         plasma_core_temperature: config.plasma.core_temperature,
         plasma_edge_wrapping: config.plasma.edge_wrapping,
+        plasma_color_core: [plasma_core.r, plasma_core.g, plasma_core.b],
+        plasma_color_edge: [plasma_edge.r, plasma_edge.g, plasma_edge.b],
         particles_count: config.particles.count,
         particles_size_min: config.particles.size_min,
         particles_size_max: config.particles.size_max,
