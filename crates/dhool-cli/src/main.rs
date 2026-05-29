@@ -1,16 +1,27 @@
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        mpsc,
+    },
+    thread,
 };
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use dhool_config::{BackendKind, Config, ExportMode, Overrides, Quality, SequenceFormat};
 use dhool_core::{
-    RenderMetadata, Stopwatch, capture_git_state, copy_text, summarize_timings, write_json,
+    FrameTiming, RenderMetadata, Stopwatch, capture_git_state, copy_text, summarize_timings,
+    write_json,
 };
-use dhool_cuda::{device_info, known_limitations, render_frame};
+use dhool_cuda::{RenderedFrame, device_info, known_limitations, render_frame};
 use dhool_export::{FfmpegPipe, plan_outputs, write_png, write_sequence_frame};
+
+const MAX_AUTO_CLI_WORKERS: usize = 6;
+const MAX_MANUAL_CLI_WORKERS: usize = 16;
 
 #[derive(Debug, Parser)]
 #[command(name = "dhool", about = "Rust/CUDA cinematic background renderer")]
@@ -142,10 +153,9 @@ fn movie(command: &str, args: RenderArgs, include_sequence: bool) -> Result<()> 
     };
 
     let wall = Stopwatch::start();
-    let mut timings = Vec::with_capacity(frame_count as usize);
     let mut outputs = Vec::new();
-    for frame_index in 0..frame_count {
-        let frame = render_frame(&config, frame_index, frame_count)?;
+    let timings = render_frames_ordered(command, &config, frame_count, |frame| {
+        let frame_index = frame.timing.frame_index;
         if let Some(sequence_dir) = &planned.sequence_dir {
             let path = write_sequence_frame(
                 sequence_dir,
@@ -162,7 +172,6 @@ fn movie(command: &str, args: RenderArgs, include_sequence: bool) -> Result<()> 
         if let Some(pipe) = pipe.as_mut() {
             pipe.write_frame(&frame.rgba)?;
         }
-        timings.push(frame.timing);
         if frame_count <= 5
             || frame_index == 0
             || frame_index + 1 == frame_count
@@ -176,7 +185,8 @@ fn movie(command: &str, args: RenderArgs, include_sequence: bool) -> Result<()> 
                 frame.timing.readback_ms
             );
         }
-    }
+        Ok(())
+    })?;
     if let Some(pipe) = pipe {
         outputs.push(pipe.finish()?.display().to_string());
     }
@@ -212,17 +222,16 @@ fn benchmark(args: RenderArgs) -> Result<()> {
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
     let wall = Stopwatch::start();
-    let mut timings = Vec::with_capacity(frame_count as usize);
     let mut outputs = Vec::new();
-    for frame_index in 0..frame_count {
-        let frame = render_frame(&config, frame_index, frame_count)?;
+    let timings = render_frames_ordered("benchmark", &config, frame_count, |frame| {
+        let frame_index = frame.timing.frame_index;
         if frame_index == 0 {
             let path = output_dir.join("cuda_probe.png");
             write_png(&path, frame.width, frame.height, &frame.rgba)?;
             outputs.push(path.display().to_string());
         }
-        timings.push(frame.timing);
-    }
+        Ok(())
+    })?;
     let wall_ms = wall.elapsed_ms();
     let metadata = build_metadata(
         "benchmark",
@@ -243,6 +252,128 @@ fn benchmark(args: RenderArgs) -> Result<()> {
         report_path.display()
     );
     Ok(())
+}
+
+enum RenderWorkerResult {
+    Frame(RenderedFrame),
+    Error { frame_index: u32, message: String },
+}
+
+fn render_frames_ordered(
+    command: &str,
+    config: &Config,
+    frame_count: u32,
+    mut on_frame: impl FnMut(RenderedFrame) -> Result<()>,
+) -> Result<Vec<FrameTiming>> {
+    if frame_count == 0 {
+        return Ok(Vec::new());
+    }
+
+    let worker_count = cli_render_worker_count(config, frame_count);
+    println!("{command}: rendering {frame_count} frame(s) with {worker_count} CUDA worker(s)");
+
+    let next_frame = Arc::new(AtomicU32::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (result_tx, result_rx) = mpsc::channel();
+
+    let render_result = thread::scope(|scope| -> Result<Vec<FrameTiming>> {
+        for _ in 0..worker_count {
+            let config = config.clone();
+            let result_tx = result_tx.clone();
+            let next_frame = Arc::clone(&next_frame);
+            let stop = Arc::clone(&stop);
+            scope.spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let frame_index = next_frame.fetch_add(1, Ordering::Relaxed);
+                    if frame_index >= frame_count {
+                        break;
+                    }
+
+                    let result = match render_frame(&config, frame_index, frame_count) {
+                        Ok(frame) => RenderWorkerResult::Frame(frame),
+                        Err(err) => {
+                            stop.store(true, Ordering::Relaxed);
+                            RenderWorkerResult::Error {
+                                frame_index,
+                                message: err.to_string(),
+                            }
+                        }
+                    };
+
+                    if result_tx.send(result).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(result_tx);
+
+        let mut pending = BTreeMap::new();
+        let mut timings = Vec::with_capacity(frame_count as usize);
+        let mut next_output_frame = 0_u32;
+
+        while next_output_frame < frame_count {
+            match result_rx
+                .recv()
+                .context("render workers stopped before completing frames")?
+            {
+                RenderWorkerResult::Frame(frame) => {
+                    pending.insert(frame.timing.frame_index, frame);
+                }
+                RenderWorkerResult::Error {
+                    frame_index,
+                    message,
+                } => {
+                    stop.store(true, Ordering::Relaxed);
+                    anyhow::bail!(
+                        "CUDA render failed for frame {}: {message}",
+                        frame_index + 1
+                    );
+                }
+            }
+
+            while let Some(frame) = pending.remove(&next_output_frame) {
+                timings.push(frame.timing);
+                if let Err(err) = on_frame(frame) {
+                    stop.store(true, Ordering::Relaxed);
+                    return Err(err);
+                }
+                next_output_frame += 1;
+            }
+        }
+
+        Ok(timings)
+    });
+
+    render_result
+}
+
+fn cli_render_worker_count(config: &Config, frame_count: u32) -> usize {
+    let frame_count = frame_count.max(1) as usize;
+    if let Ok(value) = env::var("DHOOL_CLI_GPU_WORKERS") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            return parsed.clamp(1, MAX_MANUAL_CLI_WORKERS).min(frame_count);
+        }
+    }
+
+    let info = device_info();
+    let multiprocessors = info.multiprocessor_count.max(1) as usize;
+    let auto_workers = ((multiprocessors + 23) / 24).clamp(2, MAX_AUTO_CLI_WORKERS);
+    resolution_limited_workers(config, auto_workers).min(frame_count)
+}
+
+fn resolution_limited_workers(config: &Config, worker_count: usize) -> usize {
+    let pixels = u64::from(config.render.width) * u64::from(config.render.height);
+    let resolution_cap = if pixels <= 1920 * 1080 {
+        worker_count
+    } else if pixels <= 2560 * 1440 {
+        worker_count.min(4)
+    } else if pixels <= 3840 * 2160 {
+        worker_count.min(3)
+    } else {
+        worker_count.min(2)
+    };
+    resolution_cap.max(1)
 }
 
 fn load_effective_config(args: &RenderArgs) -> Result<Config> {

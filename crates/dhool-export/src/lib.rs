@@ -44,7 +44,11 @@ pub fn write_png(path: impl AsRef<Path>, width: u32, height: u32, rgba: &[u8]) -
     let file =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
     let writer = BufWriter::new(file);
-    let encoder = image::codecs::png::PngEncoder::new(writer);
+    let encoder = image::codecs::png::PngEncoder::new_with_quality(
+        writer,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::NoFilter,
+    );
     image::ImageEncoder::write_image(
         encoder,
         rgba,

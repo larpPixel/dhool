@@ -25,6 +25,18 @@ Add comments only when they clarify non-obvious logic.
 ## Guidelines
 Do not duplicate config structs, kernels, export paths, metadata types, or shared math. If logic is copied, extract it to the right boundary.
 
+## Performance
+
+Treat live preview and CLI rendering as CUDA pipeline problems first, not quality-reduction problems. At 1x 1080p preview, optimize kernels, scheduling, readback, and upload before lowering resolution, field scale, particles, bloom, or artistic controls.
+
+CUDA production paths must be truly parallel: use bounded host worker pools, per-thread CUDA streams/caches, asynchronous copies where practical, and delayed synchronization. Do not serialize production renders through a global render mutex, the default stream, or one-frame-at-a-time host loops unless the command is intrinsically single-frame.
+
+Avoid redundant per-pixel work in kernels. Shared field motion, terrain/ridge terms, bloom pyramids, and other reusable data should be computed once at the right resolution and sampled/coalesced by later kernels. Do not recompute expensive noise, terrain, bloom, or flow math per output pixel when a lower-dimensional or lower-resolution prepass preserves the same output contract.
+
+CLI movie/final/preview rendering should render frames in parallel but write outputs in frame order. FFmpeg pipe writes, image sequence paths, timings, metadata, seeds, and frame indices must remain deterministic and ordered even when rendering completes out of order.
+
+When changing CUDA or render performance, add or run a CUDA smoke/benchmark command that reports GPU, readback, total frame time, and effective fps after warmup. Record meaningful 1080p 1x results when the change is intended to affect live or CLI performance.
+
 Tests should match risk. Add focused unit tests for config, metadata, export planning, determinism helpers, and CLI behavior. Add integration or render smoke tests when changing command behavior, export behavior, CUDA initialization, or render output contracts.
 
 Before finishing a change, run formatting and relevant tests. For renderer or CUDA changes, also run at least one CUDA device/render command that proves the changed path still works.
