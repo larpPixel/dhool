@@ -59,6 +59,10 @@ struct DhoolRenderParams {
     float particles_lifetime;
     float particles_flow_coupling;
     float particles_ember_brightness;
+    float particles_gravity;
+    float particles_drag;
+    float particles_thermal_lift;
+    float particles_jitter;
     float smoke_density;
     float smoke_scattering;
     float smoke_absorption;
@@ -451,29 +455,94 @@ __global__ void init_particles_kernel(
         return;
     }
     float aspect = static_cast<float>(params.width) / static_cast<float>(params.height);
-    uint64_t seed = params.seed ^ (static_cast<uint64_t>(id) * 0x9e3779b97f4a7c15ULL);
-    float hx = hash_u64_to_unit(seed + 11ULL);
-    float hy = hash_u64_to_unit(seed + 17ULL);
-    float heat = hash_u64_to_unit(seed + 23ULL);
-    float phase = hash_u64_to_unit(seed + 29ULL);
-    float age = fmodf(phase + params.time_seconds / fmaxf(params.particles_lifetime, 0.01f), 1.0f);
-    float2 uv = make_float2(hx, hy);
-    float2 pos = uv_to_p(uv, aspect);
-    float2 vel = make_float2(0.0f, 0.0f);
-    for (int i = 0; i < 4; ++i) {
-        float2 flow = sample_velocity_field(velocity, params.field_width, params.field_height, p_to_uv(pos, aspect));
-        vel = flow;
-        pos.x += flow.x * params.particles_flow_coupling * age * 0.018f;
-        pos.y += flow.y * params.particles_flow_coupling * age * 0.018f;
+    uint64_t base_seed = params.seed ^ (static_cast<uint64_t>(id) * 0x9e3779b97f4a7c15ULL);
+
+    // Deterministic spawn position: blend of terrain-biased and uniform.
+    // ~60% biased toward lower scene (dust rising from ground), ~40% uniform.
+    float hx = hash_u64_to_unit(base_seed + 11ULL);
+    float raw_hy = hash_u64_to_unit(base_seed + 17ULL);
+    float bias_select = hash_u64_to_unit(base_seed + 41ULL);
+    float hy;
+    if (bias_select < 0.6f) {
+        // Bias toward bottom: y in [0.55, 0.95] (below the midline, near terrain)
+        hy = 0.55f + raw_hy * 0.40f;
+    } else {
+        hy = raw_hy;
     }
-    float spawn = sample_scalar_field(temperature, params.field_width, params.field_height, p_to_uv(pos, aspect));
+
+    float heat_trait = hash_u64_to_unit(base_seed + 23ULL);
+    float phase = hash_u64_to_unit(base_seed + 29ULL);
+    float age = fmodf(phase + params.time_seconds / fmaxf(params.particles_lifetime, 0.01f), 1.0f);
+    float age_seconds = age * fmaxf(params.particles_lifetime, 0.01f);
+
+    float2 spawn_uv = make_float2(hx, hy);
+    float2 pos = uv_to_p(spawn_uv, aspect);
+
+    // Initial velocity: small random perturbation (not from flow field)
+    float v0x = (hash_u64_to_unit(base_seed + 31ULL) - 0.5f) * 0.06f;
+    float v0y = (hash_u64_to_unit(base_seed + 37ULL) - 0.5f) * 0.04f;
+    float2 vel = make_float2(v0x, v0y);
+
+    // Physics integration: sub-step forward from spawn time
+    // Use 8 integration steps for smooth trajectories
+    int substep_count = 8;
+    float dt = age_seconds / fmaxf(static_cast<float>(substep_count), 1.0f);
+    float accumulated_heat = 0.0f;
+
+    for (int step = 0; step < substep_count; ++step) {
+        float2 uv = p_to_uv(pos, aspect);
+        uv.x = fminf(1.0f, fmaxf(0.0f, uv.x));
+        uv.y = fminf(1.0f, fmaxf(0.0f, uv.y));
+
+        // Sample local flow velocity and temperature
+        float2 local_flow = sample_velocity_field(velocity, params.field_width, params.field_height, uv);
+        float local_temp = sample_scalar_field(temperature, params.field_width, params.field_height, uv);
+
+        // Accumulate heat from passing through hot regions
+        accumulated_heat += local_temp * dt * 0.5f;
+
+        // Gravity: constant downward pull
+        float fy_gravity = -params.particles_gravity;
+
+        // Stokes drag: F_drag = -drag * (v_particle - v_air * flow_coupling)
+        float2 v_air = mul2(local_flow, params.particles_flow_coupling);
+        float2 v_rel = sub2(vel, v_air);
+        float2 drag_force = mul2(v_rel, -params.particles_drag);
+
+        // Thermal updraft: hot regions push particles upward
+        float thermal_force = local_temp * params.particles_thermal_lift;
+
+        // Brownian jitter: deterministic stochastic noise per particle per step
+        uint64_t jitter_seed = base_seed ^ (static_cast<uint64_t>(step) * 7919ULL)
+                              ^ (static_cast<uint64_t>(params.frame_index) * 104729ULL);
+        float jx = (hash_u64_to_unit(jitter_seed + 1ULL) - 0.5f) * 2.0f;
+        float jy = (hash_u64_to_unit(jitter_seed + 2ULL) - 0.5f) * 2.0f;
+        float jitter_scale = params.particles_jitter * sqrtf(fmaxf(dt, 1.0e-6f));
+
+        // Total acceleration
+        float ax = drag_force.x + jx * jitter_scale;
+        float ay = fy_gravity + drag_force.y + thermal_force + jy * jitter_scale;
+
+        // Euler integration
+        vel.x += ax * dt;
+        vel.y += ay * dt;
+        pos.x += vel.x * dt;
+        pos.y += vel.y * dt;
+    }
+
+    // Lifetime fade curve: smooth fade in and fade out
     float life = smooth(saturate(age * 5.0f)) * smooth(saturate((1.0f - age) * 2.8f));
+
+    // Particle heat blends intrinsic heat trait with accumulated environmental heat
+    float final_heat = saturate(heat_trait * 0.5f + accumulated_heat * 0.5f);
+
     particles[id].pos = pos;
     particles[id].vel = vel;
     particles[id].age = age;
-    particles[id].heat = heat;
-    particles[id].size = params.particles_size_min + (params.particles_size_max - params.particles_size_min) * heat;
-    particles[id].alpha = life * saturate((spawn - 0.040f) * 3.6f) * (0.24f + heat * 0.76f);
+    particles[id].heat = final_heat;
+    particles[id].size = params.particles_size_min + (params.particles_size_max - params.particles_size_min) * heat_trait;
+    // Alpha based on lifetime only — not gated by plasma temperature
+    particles[id].alpha = life * (0.24f + final_heat * 0.76f);
 }
 
 __global__ void render_particles_kernel(float4* hdr, const Particle* particles, DhoolRenderParams params) {

@@ -41,6 +41,10 @@ particles:
   lifetime: 6.8
   flow_coupling: 0.36
   ember_brightness: 1.46
+  gravity: 0.12
+  drag: 3.5
+  thermal_lift: 0.8
+  jitter: 0.15
 
 smoke:
   density: 2.25

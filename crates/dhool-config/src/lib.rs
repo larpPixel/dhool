@@ -112,6 +112,14 @@ pub struct ParticlesConfig {
     pub lifetime: f32,
     pub flow_coupling: f32,
     pub ember_brightness: f32,
+    #[serde(default = "default_particles_gravity")]
+    pub gravity: f32,
+    #[serde(default = "default_particles_drag")]
+    pub drag: f32,
+    #[serde(default = "default_particles_thermal_lift")]
+    pub thermal_lift: f32,
+    #[serde(default = "default_particles_jitter")]
+    pub jitter: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,6 +347,15 @@ impl Config {
             32.0,
             "particles.ember_brightness",
         )?;
+        range(self.particles.gravity, 0.0, 2.0, "particles.gravity")?;
+        range(self.particles.drag, 0.0, 20.0, "particles.drag")?;
+        range(
+            self.particles.thermal_lift,
+            0.0,
+            4.0,
+            "particles.thermal_lift",
+        )?;
+        range(self.particles.jitter, 0.0, 2.0, "particles.jitter")?;
         range(self.smoke.density, 0.0, 8.0, "smoke.density")?;
         range(self.smoke.scattering, 0.0, 8.0, "smoke.scattering")?;
         range(self.smoke.absorption, 0.0, 8.0, "smoke.absorption")?;
@@ -424,6 +441,22 @@ fn require(condition: bool, message: &str) -> Result<(), ConfigError> {
 
 fn default_motion_scale() -> f32 {
     1.0
+}
+
+fn default_particles_gravity() -> f32 {
+    0.12
+}
+
+fn default_particles_drag() -> f32 {
+    3.5
+}
+
+fn default_particles_thermal_lift() -> f32 {
+    0.8
+}
+
+fn default_particles_jitter() -> f32 {
+    0.15
 }
 
 #[cfg(test)]
