@@ -1,0 +1,72 @@
+scene:
+  name: inferno_random_nocturne
+  seed: 781245903
+  duration: 13.5
+  fps: 120.0
+
+render:
+  width: 2560
+  height: 1440
+  quality: ultra
+  internal_format: rgba16f
+
+backend:
+  preferred: cuda
+  require_gpu: true
+
+simulation:
+  field_width: 1280
+  field_height: 720
+  substeps: 3
+  motion_scale: 0.83
+  velocity_decay: 0.992
+  vorticity: 0.74
+  buoyancy: 0.29
+  turbulence: 1.92
+  swirl: 0.67
+  advection_dissipation: 0.979
+
+plasma:
+  emission_strength: 5.8
+  filament_density: 1.74
+  core_temperature: 1.28
+  edge_wrapping: 0.88
+  color_core: "#ff1cd2"
+  color_edge: "#4444bb"
+
+particles:
+  count: 123000
+  size_min: 0.05
+  size_max: 1.1
+  lifetime: 6.8
+  flow_coupling: 0.36
+  ember_brightness: 1.46
+
+smoke:
+  density: 2.25
+  scattering: 1.48
+  absorption: 0.61
+  color_cool: "#17355c"
+  color_warm: "#6d2a16"
+
+bloom:
+  threshold: 0.78
+  strength: 1.08
+  radius: 1.22
+  pyramid_levels: 5
+
+grade:
+  exposure: -0.08
+  contrast: 1.24
+  saturation: 0.76
+  black_point: 0.02
+  vignette: 0.64
+  grain: 0.018
+
+export:
+  mode: pipe
+  sequence_format: png
+  video_codec: libx264
+  crf: 20
+  preset: medium
+  output_dir: outputs/inferno_random

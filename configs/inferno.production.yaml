@@ -18,7 +18,7 @@ simulation:
   field_width: 1024
   field_height: 576
   substeps: 2
-  motion_scale: 0.26
+  motion_scale: 0.6
   velocity_decay: 0.996
   vorticity: 0.58
   buoyancy: 0.16
@@ -31,21 +31,23 @@ plasma:
   filament_density: 2.15
   core_temperature: 1.0
   edge_wrapping: 0.95
+  color_core: "#ff431e"
+  color_edge: "#e66b1a"
 
 particles:
   count: 95000
   size_min: 0.08
   size_max: 0.82
   lifetime: 7.5
-  flow_coupling: 0.82
+  flow_coupling: 0.42
   ember_brightness: 1.12
 
 smoke:
-  density: 1.95
+  density: 1.8
   scattering: 1.2
   absorption: 0.42
-  color_cool: "#17181a"
-  color_warm: "#6a4a36"
+  color_cool: "#142f51"
+  color_warm: "#153f5c"
 
 bloom:
   threshold: 0.85
