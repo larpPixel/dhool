@@ -13,6 +13,8 @@ pub fn draw(
     target_preview_fps: &mut f32,
     timing: Option<&FrameTiming>,
     preview_scale: f32,
+    in_flight: usize,
+    pipeline_depth: usize,
 ) -> bool {
     let mut changed = false;
     let last_frame = frame_count.saturating_sub(1);
@@ -60,6 +62,7 @@ pub fn draw(
         }
 
         ui.label(format!("Scale: {preview_scale:.2}"));
+        ui.label(format!("Queue: {in_flight}/{pipeline_depth}"));
     });
 
     changed

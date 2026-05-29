@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
 
 extern "C" {
 
@@ -104,11 +103,27 @@ static_assert(sizeof(unsigned long long) == sizeof(uint64_t), "unexpected uint64
 struct DeviceBuffer {
     void* ptr = nullptr;
     size_t capacity = 0;
+
+    void release() {
+        if (ptr != nullptr) {
+            cudaFree(ptr);
+            ptr = nullptr;
+            capacity = 0;
+        }
+    }
 };
 
 struct HostBuffer {
     void* ptr = nullptr;
     size_t capacity = 0;
+
+    void release() {
+        if (ptr != nullptr) {
+            cudaFreeHost(ptr);
+            ptr = nullptr;
+            capacity = 0;
+        }
+    }
 };
 
 struct RenderCache {
@@ -124,11 +139,34 @@ struct RenderCache {
     cudaEvent_t gpu_stop {};
     cudaEvent_t copy_start {};
     cudaEvent_t copy_stop {};
+    cudaStream_t stream {};
+    bool stream_ready = false;
     bool events_ready = false;
+
+    ~RenderCache() {
+        hdr.release();
+        ldr.release();
+        velocity.release();
+        density.release();
+        temperature.release();
+        particles.release();
+        for (int i = 0; i < 8; ++i) {
+            bloom_levels[i].release();
+        }
+        readback.release();
+        if (events_ready) {
+            cudaEventDestroy(gpu_start);
+            cudaEventDestroy(gpu_stop);
+            cudaEventDestroy(copy_start);
+            cudaEventDestroy(copy_stop);
+        }
+        if (stream_ready) {
+            cudaStreamDestroy(stream);
+        }
+    }
 };
 
-std::mutex g_render_cache_mutex;
-RenderCache g_render_cache;
+thread_local RenderCache g_render_cache;
 
 __device__ float clamp01(float v) {
     return fminf(1.0f, fmaxf(0.0f, v));
@@ -835,6 +873,14 @@ bool ensure_events(RenderCache& cache, DhoolRenderReport* report) {
     if (cache.events_ready) {
         return true;
     }
+    if (!cache.stream_ready) {
+        cudaError_t err = cudaStreamCreateWithFlags(&cache.stream, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            set_error(report, err, "cudaStreamCreateWithFlags render stream");
+            return false;
+        }
+        cache.stream_ready = true;
+    }
     cudaError_t err = cudaEventCreate(&cache.gpu_start);
     if (err != cudaSuccess) {
         set_error(report, err, "cudaEventCreate gpu_start");
@@ -913,7 +959,6 @@ extern "C" int dhool_cuda_render_rgba8(
     const size_t pixels = static_cast<size_t>(params->width) * static_cast<size_t>(params->height);
     const size_t field_pixels = static_cast<size_t>(params->field_width) * static_cast<size_t>(params->field_height);
     const size_t rgba_bytes = pixels * sizeof(uchar4);
-    std::lock_guard<std::mutex> lock(g_render_cache_mutex);
     RenderCache& cache = g_render_cache;
     if (!ensure_events(cache, report)
         || !ensure_device_buffer(cache.hdr, pixels * sizeof(float4), report, "cudaMalloc hdr")
@@ -955,14 +1000,14 @@ extern "C" int dhool_cuda_render_rgba8(
     dim3 block(16, 16);
     dim3 full_grid((params->width + block.x - 1) / block.x, (params->height + block.y - 1) / block.y);
     dim3 field_grid((params->field_width + block.x - 1) / block.x, (params->field_height + block.y - 1) / block.y);
-    cudaEventRecord(cache.gpu_start);
-    build_fields_kernel<<<field_grid, block>>>(velocity, density, temperature, *params);
+    cudaEventRecord(cache.gpu_start, cache.stream);
+    build_fields_kernel<<<field_grid, block, 0, cache.stream>>>(velocity, density, temperature, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "build_fields_kernel");
         goto cleanup;
     }
-    render_hdr_kernel<<<full_grid, block>>>(hdr, velocity, density, temperature, *params);
+    render_hdr_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, velocity, density, temperature, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "render_hdr_kernel");
@@ -971,13 +1016,13 @@ extern "C" int dhool_cuda_render_rgba8(
     if (params->particles_count > 0) {
         dim3 particle_block(256);
         dim3 particle_grid((params->particles_count + particle_block.x - 1) / particle_block.x);
-        init_particles_kernel<<<particle_grid, particle_block>>>(particles, velocity, temperature, *params);
+        init_particles_kernel<<<particle_grid, particle_block, 0, cache.stream>>>(particles, velocity, temperature, *params);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
             set_error(report, err, "init_particles_kernel");
             goto cleanup;
         }
-        render_particles_kernel<<<particle_grid, particle_block>>>(hdr, particles, *params);
+        render_particles_kernel<<<particle_grid, particle_block, 0, cache.stream>>>(hdr, particles, *params);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
             set_error(report, err, "render_particles_kernel");
@@ -988,9 +1033,9 @@ extern "C" int dhool_cuda_render_rgba8(
     for (int i = 0; i < level_count; ++i) {
         dim3 grid((bloom_w[i] + block.x - 1) / block.x, (bloom_h[i] + block.y - 1) / block.y);
         if (i == 0) {
-            threshold_downsample_kernel<<<grid, block>>>(hdr, bloom_levels[i], params->width, params->height, bloom_w[i], bloom_h[i], *params);
+            threshold_downsample_kernel<<<grid, block, 0, cache.stream>>>(hdr, bloom_levels[i], params->width, params->height, bloom_w[i], bloom_h[i], *params);
         } else {
-            downsample_kernel<<<grid, block>>>(bloom_levels[i - 1], bloom_levels[i], bloom_w[i - 1], bloom_h[i - 1], bloom_w[i], bloom_h[i]);
+            downsample_kernel<<<grid, block, 0, cache.stream>>>(bloom_levels[i - 1], bloom_levels[i], bloom_w[i - 1], bloom_h[i - 1], bloom_w[i], bloom_h[i]);
         }
         err = cudaGetLastError();
         if (err != cudaSuccess) {
@@ -1005,32 +1050,27 @@ extern "C" int dhool_cuda_render_rgba8(
         bloom.widths[i] = bloom_w[i];
         bloom.heights[i] = bloom_h[i];
     }
-    final_grade_kernel<<<full_grid, block>>>(hdr, ldr, bloom, *params);
+    final_grade_kernel<<<full_grid, block, 0, cache.stream>>>(hdr, ldr, bloom, *params);
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         set_error(report, err, "final_grade_kernel");
         goto cleanup;
     }
-    cudaEventRecord(cache.gpu_stop);
-    err = cudaEventSynchronize(cache.gpu_stop);
-    if (err != cudaSuccess) {
-        set_error(report, err, "cudaEventSynchronize gpu_stop");
-        goto cleanup;
-    }
-    cudaEventElapsedTime(&report->gpu_ms, cache.gpu_start, cache.gpu_stop);
+    cudaEventRecord(cache.gpu_stop, cache.stream);
 
-    cudaEventRecord(cache.copy_start);
-    err = cudaMemcpy(cache.readback.ptr, ldr, rgba_bytes, cudaMemcpyDeviceToHost);
+    cudaEventRecord(cache.copy_start, cache.stream);
+    err = cudaMemcpyAsync(cache.readback.ptr, ldr, rgba_bytes, cudaMemcpyDeviceToHost, cache.stream);
     if (err != cudaSuccess) {
-        set_error(report, err, "cudaMemcpy readback");
+        set_error(report, err, "cudaMemcpyAsync readback");
         goto cleanup;
     }
-    cudaEventRecord(cache.copy_stop);
+    cudaEventRecord(cache.copy_stop, cache.stream);
     err = cudaEventSynchronize(cache.copy_stop);
     if (err != cudaSuccess) {
         set_error(report, err, "cudaEventSynchronize copy_stop");
         goto cleanup;
     }
+    cudaEventElapsedTime(&report->gpu_ms, cache.gpu_start, cache.gpu_stop);
     cudaEventElapsedTime(&report->readback_ms, cache.copy_start, cache.copy_stop);
     std::memcpy(host_rgba, cache.readback.ptr, rgba_bytes);
     report->status = 1;

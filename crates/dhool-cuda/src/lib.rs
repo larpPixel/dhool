@@ -264,3 +264,49 @@ fn cuda_version(version: c_int) -> String {
     let minor = (version % 1000) / 10;
     format!("{major}.{minor}")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, thread};
+
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a CUDA device"]
+    fn renders_parallel_cuda_smoke() {
+        let config = small_cuda_config();
+        let workers = (0..2)
+            .map(|frame_index| {
+                let config = config.clone();
+                thread::spawn(move || render_frame(&config, frame_index, 2))
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            let frame = worker
+                .join()
+                .expect("render worker panicked")
+                .expect("CUDA render failed");
+            assert_eq!(frame.width, 96);
+            assert_eq!(frame.height, 54);
+            assert_eq!(frame.rgba.len(), 96 * 54 * 4);
+            assert!(frame.timing.total_ms > 0.0);
+        }
+    }
+
+    fn small_cuda_config() -> Config {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/inferno.production.yaml");
+        let mut config = Config::load(path).expect("sample config loads");
+        config.render.width = 96;
+        config.render.height = 54;
+        config.render.quality = Quality::Preview;
+        config.simulation.field_width = 32;
+        config.simulation.field_height = 24;
+        config.simulation.substeps = 1;
+        config.particles.count = 256;
+        config.bloom.pyramid_levels = 1;
+        config.validate().expect("small CUDA config validates");
+        config
+    }
+}
