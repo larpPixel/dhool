@@ -14,7 +14,10 @@ use dhool_config::Config;
 use dhool_core::FrameTiming;
 use eframe::egui::TextureHandle;
 
-use crate::render_thread::{RenderRequest, RenderResponse};
+use crate::{
+    render_thread::{RenderRequest, RenderResponse},
+    video_render::VideoRenderProgress,
+};
 
 pub struct LiveApp {
     config: Config,
@@ -23,6 +26,7 @@ pub struct LiveApp {
     response_rx: Receiver<RenderResponse>,
     texture: Option<TextureHandle>,
     render_worker_count: usize,
+    show_home: bool,
     preview_scale: f32,
     preview_field_scale: f32,
     frame_index: u32,
@@ -31,6 +35,9 @@ pub struct LiveApp {
     max_gpu: bool,
     target_preview_fps: f32,
     loop_playback: bool,
+    render_settings_open: bool,
+    render_config_draft: Option<Config>,
+    video_render_rx: Option<Receiver<VideoRenderProgress>>,
     last_play_tick: Instant,
     last_submit_at: Instant,
     latest_timing: Option<FrameTiming>,
@@ -45,6 +52,16 @@ pub struct LiveApp {
 impl eframe::App for LiveApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         self.receive_frames(ctx);
+        self.receive_video_render_progress(ctx);
+        if self.show_home {
+            self.draw_home(ctx);
+            self.draw_render_settings(ctx);
+            if self.video_render_active() || !self.in_flight_request_ids.is_empty() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
+            return;
+        }
+
         let playback_changed = if self.playing && !self.max_gpu {
             self.advance_playback_realtime()
         } else {
@@ -54,6 +71,7 @@ impl eframe::App for LiveApp {
             self.queue_render();
         }
         self.draw_top_bar(ctx);
+        self.draw_render_settings(ctx);
         let config_changed = self.draw_sidebar(ctx);
         self.draw_preview(ctx);
         let timeline_changed = self.draw_timeline(ctx);
@@ -61,16 +79,20 @@ impl eframe::App for LiveApp {
         if config_changed {
             self.frame_index = self.frame_index.min(self.frame_count().saturating_sub(1));
         }
-        if config_changed || timeline_changed {
+        if !self.video_render_active() && (config_changed || timeline_changed) {
             self.reset_playback_queue();
             self.reject_older_responses();
             self.queue_render();
-        } else if self.playing && self.max_gpu {
+        } else if !self.video_render_active() && self.playing && self.max_gpu {
             self.pending_render = true;
         }
         self.try_submit_render();
 
-        if self.playing || self.pending_render || !self.in_flight_request_ids.is_empty() {
+        if self.video_render_active()
+            || self.playing
+            || self.pending_render
+            || !self.in_flight_request_ids.is_empty()
+        {
             let repaint_after = if self.max_gpu {
                 std::time::Duration::from_millis(8)
             } else {

@@ -1,6 +1,4 @@
-use dhool_config::{
-    BackendKind, ExportMode, InternalFormat, Quality, SequenceFormat, parse_hex_color,
-};
+use dhool_config::{BackendKind, InternalFormat, Quality, parse_hex_color};
 use eframe::egui::{self, Color32, Ui};
 
 pub(super) fn quality_combo(ui: &mut Ui, label: &str, value: &mut Quality) -> bool {
@@ -50,51 +48,6 @@ pub(super) fn internal_format_combo(ui: &mut Ui, value: &mut InternalFormat) -> 
                     value,
                     InternalFormat::Rgba16f,
                     internal_format_label(InternalFormat::Rgba16f),
-                )
-                .changed();
-        });
-    changed
-}
-
-pub(super) fn export_mode_combo(ui: &mut Ui, label: &str, value: &mut ExportMode) -> bool {
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
-        .selected_text(export_mode_label(*value))
-        .show_ui(ui, |ui| {
-            changed |= ui
-                .selectable_value(value, ExportMode::Pipe, export_mode_label(ExportMode::Pipe))
-                .changed();
-            changed |= ui
-                .selectable_value(
-                    value,
-                    ExportMode::Sequence,
-                    export_mode_label(ExportMode::Sequence),
-                )
-                .changed();
-            changed |= ui
-                .selectable_value(value, ExportMode::Both, export_mode_label(ExportMode::Both))
-                .changed();
-        });
-    changed
-}
-
-pub(super) fn sequence_format_combo(ui: &mut Ui, label: &str, value: &mut SequenceFormat) -> bool {
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
-        .selected_text(sequence_format_label(*value))
-        .show_ui(ui, |ui| {
-            changed |= ui
-                .selectable_value(
-                    value,
-                    SequenceFormat::Png,
-                    sequence_format_label(SequenceFormat::Png),
-                )
-                .changed();
-            changed |= ui
-                .selectable_value(
-                    value,
-                    SequenceFormat::Exr,
-                    sequence_format_label(SequenceFormat::Exr),
                 )
                 .changed();
         });
@@ -156,20 +109,5 @@ fn backend_label(value: BackendKind) -> &'static str {
 fn internal_format_label(value: InternalFormat) -> &'static str {
     match value {
         InternalFormat::Rgba16f => "rgba16f",
-    }
-}
-
-fn export_mode_label(value: ExportMode) -> &'static str {
-    match value {
-        ExportMode::Pipe => "pipe",
-        ExportMode::Sequence => "sequence",
-        ExportMode::Both => "both",
-    }
-}
-
-fn sequence_format_label(value: SequenceFormat) -> &'static str {
-    match value {
-        SequenceFormat::Png => "png",
-        SequenceFormat::Exr => "exr",
     }
 }

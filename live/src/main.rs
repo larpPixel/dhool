@@ -3,6 +3,7 @@ mod export;
 mod panels;
 mod render_thread;
 mod timeline;
+mod video_render;
 
 use std::{
     env,

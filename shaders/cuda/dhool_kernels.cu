@@ -340,13 +340,15 @@ __device__ float plasma_mask(float2 p, float t, uint64_t seed, const DhoolRender
 }
 
 __device__ float terrain_base_y(float x) {
-    float left_mass = 0.190f * expf(-((x + 0.72f) * (x + 0.72f)) / 0.045f);
-    left_mass += 0.100f * expf(-((x + 0.44f) * (x + 0.44f)) / 0.120f);
-    float right_mass = 0.235f * expf(-((x - 0.58f) * (x - 0.58f)) / 0.035f);
-    right_mass += 0.130f * expf(-((x - 0.82f) * (x - 0.82f)) / 0.055f);
-    float center_dip = -0.125f * expf(-(x * x) / 0.165f);
-    float terrace = 0.035f * smooth(saturate((x - 0.12f) * 2.4f));
-    return -0.420f + left_mass + right_mass + center_dip + terrace + 0.030f * sinf(x * 10.0f + 1.1f);
+    float left_shelf = 0.105f * expf(-((x + 0.86f) * (x + 0.86f)) / 0.165f);
+    left_shelf += 0.058f * expf(-((x + 0.48f) * (x + 0.48f)) / 0.090f);
+    float center_ledge = 0.050f * expf(-((x + 0.06f) * (x + 0.06f)) / 0.210f);
+    float right_spire = 0.255f * expf(-((x - 0.68f) * (x - 0.68f)) / 0.024f);
+    right_spire += 0.082f * expf(-((x - 0.90f) * (x - 0.90f)) / 0.070f);
+    float broken_saddle = -0.060f * expf(-((x - 0.30f) * (x - 0.30f)) / 0.060f);
+    float slope = 0.040f * x;
+    float strata = 0.025f * sinf(x * 9.0f + 1.1f) + 0.012f * sinf(x * 21.0f - 0.4f);
+    return -0.455f + left_shelf + center_ledge + right_spire + broken_saddle + slope + strata;
 }
 
 __device__ float terrain_ridge_y(float2 p, float t, uint64_t seed) {

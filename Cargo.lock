@@ -818,9 +818,12 @@ dependencies = [
 name = "dhool-live"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "dhool-config",
  "dhool-core",
  "dhool-cuda",
+ "dhool-export",
  "eframe",
  "egui",
  "egui_extras",

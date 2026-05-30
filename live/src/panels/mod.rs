@@ -26,6 +26,13 @@ pub fn draw_all(
     changed |= effects::smoke_panel(ui, config);
     changed |= effects::bloom_panel(ui, config);
     changed |= effects::grade_panel(ui, config);
-    changed |= export::export_panel(ui, config);
+    changed
+}
+
+pub fn draw_render_settings(ui: &mut Ui, config: &mut Config) -> bool {
+    let mut changed = false;
+    changed |= scene::export_timing_controls(ui, config);
+    ui.separator();
+    changed |= export::video_settings(ui, config);
     changed
 }

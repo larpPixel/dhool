@@ -6,7 +6,6 @@ pub fn draw(
     frame_index: &mut u32,
     frame_count: u32,
     fps: f32,
-    duration: f32,
     playing: &mut bool,
     loop_playback: &mut bool,
     max_gpu: &mut bool,
@@ -43,7 +42,7 @@ pub fn draw(
             .changed();
 
         let current_seconds = *frame_index as f32 / fps.max(1.0);
-        ui.label(format!("{current_seconds:.2}s / {duration:.2}s"));
+        ui.label(format!("{current_seconds:.2}s"));
         ui.separator();
         ui.label(format!("Frame: {}/{}", *frame_index + 1, frame_count));
 

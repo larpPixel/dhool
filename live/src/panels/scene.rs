@@ -15,21 +15,25 @@ pub(super) fn scene_panel(ui: &mut Ui, config: &mut Config) -> bool {
                         .prefix("seed "),
                 )
                 .changed();
-            changed |= ui
-                .add(
-                    egui::Slider::new(
-                        &mut config.scene.duration,
-                        SCENE_DURATION_MIN..=SCENE_DURATION_MAX,
-                    )
-                    .text("duration"),
-                )
-                .changed();
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut config.scene.fps, SCENE_FPS_MIN..=SCENE_FPS_MAX)
-                        .text("fps"),
-                )
-                .changed();
         });
+    changed
+}
+
+pub(super) fn export_timing_controls(ui: &mut Ui, config: &mut Config) -> bool {
+    let mut changed = false;
+    ui.label("animation");
+    changed |= ui
+        .add(
+            egui::Slider::new(
+                &mut config.scene.duration,
+                SCENE_DURATION_MIN..=SCENE_DURATION_MAX,
+            )
+            .text("duration"),
+        )
+        .changed();
+    changed |= ui
+        .add(egui::Slider::new(&mut config.scene.fps, SCENE_FPS_MIN..=SCENE_FPS_MAX).text("fps"))
+        .changed();
+    ui.label(format!("{} frames", config.frame_count(None)));
     changed
 }

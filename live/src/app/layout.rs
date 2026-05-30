@@ -1,43 +1,82 @@
+use std::path::PathBuf;
+
+use dhool_config::{BackendKind, ExportMode};
+use dhool_core::sanitize_stem;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 
 use crate::{
     app::{LiveApp, image::fit_size},
-    export, panels, timeline,
+    export, panels, timeline, video_render,
 };
 
 impl LiveApp {
+    pub(super) fn draw_home(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let rect = ui.max_rect();
+            ui.painter()
+                .rect_filled(rect, 0.0, Color32::from_rgb(7, 8, 10));
+            ui.with_layout(
+                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("dhool");
+                        ui.add_space(16.0);
+                        if ui.button("Open live preview").clicked() {
+                            self.show_home = false;
+                            self.render_current_frame();
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.video_render_active(),
+                                egui::Button::new("Render video"),
+                            )
+                            .clicked()
+                        {
+                            self.open_render_settings();
+                        }
+                        if ui.button("Load config").clicked() {
+                            self.load_config_from_dialog();
+                        }
+                        ui.add_space(12.0);
+                        if let Some(error) = &self.error {
+                            ui.colored_label(Color32::from_rgb(255, 140, 110), error);
+                        } else {
+                            ui.label(&self.status);
+                        }
+                    });
+                },
+            );
+        });
+    }
+
     pub(super) fn draw_top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top-bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("dhool live preview");
                 ui.separator();
-                if ui.button("Load").clicked() {
-                    match export::load_config() {
-                        Ok(Some((path, config))) => {
-                            self.config = config;
-                            self.source_path = Some(path);
-                            self.frame_index = 0;
-                            self.reset_playback_queue();
-                            self.latest_timing = None;
-                            self.reject_older_responses();
-                            self.queue_render();
-                        }
-                        Ok(None) => {}
-                        Err(message) => {
-                            self.status = "load failed".to_string();
-                            self.error = Some(message);
-                        }
-                    }
+                if ui.button("Home").clicked() {
+                    self.playing = false;
+                    self.pending_render = false;
+                    self.show_home = true;
                 }
-                if ui.button("Export").clicked() {
+                if ui
+                    .add_enabled(!self.video_render_active(), egui::Button::new("Render"))
+                    .clicked()
+                {
+                    self.open_render_settings();
+                }
+                if ui.button("Load").clicked() {
+                    self.load_config_from_dialog();
+                }
+                if ui.button("Save Config").clicked() {
                     match export::export_config(&self.config) {
                         Ok(Some(path)) => {
-                            self.status = format!("exported {}", path.display());
+                            self.status = format!("saved {}", path.display());
                             self.error = None;
                         }
                         Ok(None) => {}
                         Err(message) => {
-                            self.status = "export failed".to_string();
+                            self.status = "save failed".to_string();
                             self.error = Some(message);
                         }
                     }
@@ -52,6 +91,130 @@ impl LiveApp {
         });
     }
 
+    fn open_render_settings(&mut self) {
+        let mut config = self.config.clone();
+        config.export.mode = ExportMode::Pipe;
+        self.render_config_draft = Some(config);
+        self.render_settings_open = true;
+    }
+
+    fn load_config_from_dialog(&mut self) {
+        match export::load_config() {
+            Ok(Some((path, config))) => {
+                self.config = config;
+                self.source_path = Some(path);
+                self.texture = None;
+                self.frame_index = 0;
+                self.latest_timing = None;
+                self.show_home = false;
+                self.render_current_frame();
+            }
+            Ok(None) => {}
+            Err(message) => {
+                self.status = "load failed".to_string();
+                self.error = Some(message);
+            }
+        }
+    }
+
+    pub(super) fn draw_render_settings(&mut self, ctx: &egui::Context) {
+        let mut open = self.render_settings_open;
+        let mut render_requested = false;
+        let mut close_requested = false;
+
+        if open {
+            if self.render_config_draft.is_none() {
+                self.open_render_settings();
+            }
+            let response =
+                egui::Modal::new(egui::Id::new("render-settings-modal")).show(ctx, |ui| {
+                    ui.set_width(360.0);
+                    ui.heading("Render video");
+                    ui.separator();
+                    ui.spacing_mut().slider_width = 180.0;
+                    if let Some(config) = self.render_config_draft.as_mut() {
+                        panels::draw_render_settings(ui, config);
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.video_render_active(),
+                                egui::Button::new("Render video"),
+                            )
+                            .clicked()
+                        {
+                            render_requested = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+            if response.should_close() {
+                close_requested = true;
+            }
+        }
+
+        if render_requested {
+            close_requested = self.start_video_render_from_draft(ctx);
+        }
+
+        if close_requested {
+            open = false;
+        }
+        self.render_settings_open = open;
+        if !open {
+            self.render_config_draft = None;
+        }
+    }
+
+    fn start_video_render_from_draft(&mut self, ctx: &egui::Context) -> bool {
+        if self.video_render_active() {
+            return false;
+        }
+
+        let Some(mut config) = self.render_config_draft.clone() else {
+            return false;
+        };
+        config.export.mode = ExportMode::Pipe;
+
+        if config.backend.preferred != BackendKind::Cuda {
+            self.status = "render failed".to_string();
+            self.error = Some("video rendering requires the CUDA backend".to_string());
+            return false;
+        }
+
+        let default_name = format!("{}.mp4", sanitize_stem(&config.scene.name));
+        let Some(mut path) = rfd::FileDialog::new()
+            .add_filter("MP4 video", &["mp4"])
+            .set_file_name(&default_name)
+            .save_file()
+        else {
+            return false;
+        };
+        if path.extension().is_none() {
+            path.set_extension("mp4");
+        }
+        let output_dir = output_dir_for_video_path(&path);
+        config.export.output_dir = output_dir.to_string_lossy().into_owned();
+
+        if let Err(err) = config.validate() {
+            self.status = "render failed".to_string();
+            self.error = Some(err.to_string());
+            return false;
+        }
+
+        self.config = config.clone();
+        self.playing = false;
+        self.pending_render = false;
+        self.reject_older_responses();
+        self.video_render_rx = Some(video_render::spawn_video_render(config, path, ctx.clone()));
+        self.status = "starting video render".to_string();
+        self.error = None;
+        true
+    }
+
     pub(super) fn draw_sidebar(&mut self, ctx: &egui::Context) -> bool {
         let mut changed = false;
         egui::SidePanel::left("parameter-sidebar")
@@ -60,12 +223,14 @@ impl LiveApp {
             .width_range(280.0..=460.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    changed |= panels::draw_all(
-                        ui,
-                        &mut self.config,
-                        &mut self.preview_scale,
-                        &mut self.preview_field_scale,
-                    );
+                    ui.add_enabled_ui(!self.video_render_active(), |ui| {
+                        changed |= panels::draw_all(
+                            ui,
+                            &mut self.config,
+                            &mut self.preview_scale,
+                            &mut self.preview_field_scale,
+                        );
+                    });
                 });
             });
         changed
@@ -130,7 +295,6 @@ impl LiveApp {
                 &mut self.frame_index,
                 frame_count,
                 self.config.scene.fps,
-                self.config.scene.duration,
                 &mut self.playing,
                 &mut self.loop_playback,
                 &mut self.max_gpu,
@@ -143,4 +307,10 @@ impl LiveApp {
         });
         changed
     }
+}
+
+fn output_dir_for_video_path(path: &PathBuf) -> PathBuf {
+    path.parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }

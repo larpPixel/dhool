@@ -15,6 +15,7 @@ impl LiveApp {
         let (render_tx, request_rx) = channel::<RenderRequest>();
         let (response_tx, response_rx) = channel();
         let render_worker_count = spawn_render_thread(request_rx, response_tx, cc.egui_ctx.clone());
+        let show_home = source_path.is_none();
 
         let mut app = Self {
             config,
@@ -23,6 +24,7 @@ impl LiveApp {
             response_rx,
             texture: None,
             render_worker_count,
+            show_home,
             preview_scale: 1.0,
             preview_field_scale: 0.5,
             frame_index: 0,
@@ -31,6 +33,9 @@ impl LiveApp {
             max_gpu: true,
             target_preview_fps: 60.0,
             loop_playback: true,
+            render_settings_open: false,
+            render_config_draft: None,
+            video_render_rx: None,
             last_play_tick: Instant::now(),
             last_submit_at: Instant::now(),
             latest_timing: None,
@@ -38,10 +43,12 @@ impl LiveApp {
             displayed_request_id: 0,
             in_flight_request_ids: Vec::new(),
             pending_render: false,
-            status: "queued initial render".to_string(),
+            status: "ready".to_string(),
             error: None,
         };
-        app.queue_render();
+        if !app.show_home {
+            app.render_current_frame();
+        }
         app
     }
 }

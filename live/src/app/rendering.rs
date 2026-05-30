@@ -10,9 +10,76 @@ use crate::{
         image::{color_image_from_opaque_rgba, scaled_dimension},
     },
     render_thread::{RenderRequest, RenderResponse},
+    video_render::VideoRenderProgress,
 };
 
 impl LiveApp {
+    pub(super) fn video_render_active(&self) -> bool {
+        self.video_render_rx.is_some()
+    }
+
+    pub(super) fn receive_video_render_progress(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.video_render_rx.take() else {
+            return;
+        };
+
+        let mut keep_receiver = true;
+        while let Ok(progress) = rx.try_recv() {
+            match progress {
+                VideoRenderProgress::Started {
+                    frame_count,
+                    output_path,
+                } => {
+                    self.status = format!(
+                        "rendering video: 0/{frame_count} -> {}",
+                        output_path.display()
+                    );
+                    self.error = None;
+                }
+                VideoRenderProgress::Frame {
+                    frame_index,
+                    frame_count,
+                    gpu_ms,
+                    readback_ms,
+                } => {
+                    self.status = format!(
+                        "rendering video: {}/{} gpu {:.1} ms readback {:.1} ms",
+                        frame_index + 1,
+                        frame_count,
+                        gpu_ms,
+                        readback_ms
+                    );
+                }
+                VideoRenderProgress::Finished {
+                    frame_count,
+                    wall_ms,
+                    outputs,
+                } => {
+                    let output = outputs
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "video output".to_string());
+                    self.status = format!(
+                        "rendered {frame_count} frames in {:.1}s: {output}",
+                        wall_ms / 1000.0
+                    );
+                    self.error = None;
+                    keep_receiver = false;
+                }
+                VideoRenderProgress::Error(message) => {
+                    self.status = "video render failed".to_string();
+                    self.error = Some(message);
+                    keep_receiver = false;
+                }
+            }
+        }
+
+        if keep_receiver {
+            self.video_render_rx = Some(rx);
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
     pub(super) fn receive_frames(&mut self, ctx: &egui::Context) -> bool {
         let mut rendered_frame = false;
         let mut completed_request = false;
@@ -96,6 +163,13 @@ impl LiveApp {
     pub(super) fn queue_render(&mut self) {
         self.pending_render = true;
         self.try_submit_render();
+    }
+
+    pub(super) fn render_current_frame(&mut self) {
+        self.playing = false;
+        self.reset_playback_queue();
+        self.reject_older_responses();
+        self.queue_render();
     }
 
     pub(super) fn try_submit_render(&mut self) {

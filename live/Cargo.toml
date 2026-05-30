@@ -9,9 +9,12 @@ name = "dhool-live"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+chrono.workspace = true
 dhool-config = { path = "../crates/dhool-config" }
 dhool-core = { path = "../crates/dhool-core" }
 dhool-cuda = { path = "../crates/dhool-cuda" }
+dhool-export = { path = "../crates/dhool-export" }
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11"] }
 egui = "0.31"
 egui_extras = "0.31"
