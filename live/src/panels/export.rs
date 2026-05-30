@@ -1,22 +1,13 @@
 use dhool_config::{Config, EXPORT_CRF_MAX};
-use eframe::egui::{DragValue, Ui};
+use eframe::egui::Ui;
+
+use crate::panels::form;
 
 pub(super) fn video_settings(ui: &mut Ui, config: &mut Config) -> bool {
     let mut changed = false;
-    ui.strong("Video");
-    ui.label("video codec");
-    changed |= ui
-        .text_edit_singleline(&mut config.export.video_codec)
-        .changed();
-    changed |= ui
-        .add(
-            DragValue::new(&mut config.export.crf)
-                .range(0..=EXPORT_CRF_MAX)
-                .speed(1.0)
-                .prefix("crf "),
-        )
-        .changed();
-    ui.label("preset");
-    changed |= ui.text_edit_singleline(&mut config.export.preset).changed();
+    form::subheading(ui, "Video");
+    changed |= form::text_row(ui, "Codec", &mut config.export.video_codec);
+    changed |= form::drag_u8(ui, "CRF", &mut config.export.crf, 0..=EXPORT_CRF_MAX, 1.0);
+    changed |= form::text_row(ui, "Preset", &mut config.export.preset);
     changed
 }

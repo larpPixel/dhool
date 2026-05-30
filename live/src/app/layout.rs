@@ -9,6 +9,13 @@ use crate::{
     export, panels, randomize, timeline, video_render,
 };
 
+const TOOLBAR_BUTTON: Vec2 = Vec2::new(96.0, 26.0);
+const HOME_BUTTON: Vec2 = Vec2::new(180.0, 30.0);
+const MODAL_WIDTH: f32 = 420.0;
+const SIDEBAR_WIDTH: f32 = 360.0;
+const SIDEBAR_MIN_WIDTH: f32 = 320.0;
+const SIDEBAR_MAX_WIDTH: f32 = 480.0;
+
 impl LiveApp {
     pub(super) fn draw_home(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -21,29 +28,17 @@ impl LiveApp {
                     ui.vertical_centered(|ui| {
                         ui.heading("dhool");
                         ui.add_space(16.0);
-                        if ui.button("Open preview").clicked() {
+                        if home_button(ui, "Open preview", true).clicked() {
                             self.show_home = false;
                             self.render_current_frame();
                         }
-                        if ui
-                            .add_enabled(
-                                !self.video_render_active(),
-                                egui::Button::new("Render video"),
-                            )
-                            .clicked()
-                        {
+                        if home_button(ui, "Render video", !self.video_render_active()).clicked() {
                             self.open_render_settings();
                         }
-                        if ui
-                            .add_enabled(
-                                !self.video_render_active(),
-                                egui::Button::new("Randomize"),
-                            )
-                            .clicked()
-                        {
+                        if home_button(ui, "Randomize", !self.video_render_active()).clicked() {
                             self.randomize_current_config();
                         }
-                        if ui.button("Load config").clicked() {
+                        if home_button(ui, "Load config", true).clicked() {
                             self.load_config_from_dialog();
                         }
                         ui.add_space(12.0);
@@ -60,30 +55,25 @@ impl LiveApp {
 
     pub(super) fn draw_top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top-bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
+            ui.horizontal_wrapped(|ui| {
                 ui.heading("dhool live preview");
                 ui.separator();
-                if ui.button("Home").clicked() {
+                if toolbar_button(ui, "Home", true).clicked() {
                     self.playing = false;
                     self.pending_render = false;
                     self.show_home = true;
                 }
-                if ui
-                    .add_enabled(!self.video_render_active(), egui::Button::new("Render"))
-                    .clicked()
-                {
+                if toolbar_button(ui, "Render", !self.video_render_active()).clicked() {
                     self.open_render_settings();
                 }
-                if ui
-                    .add_enabled(!self.video_render_active(), egui::Button::new("Randomize"))
-                    .clicked()
-                {
+                if toolbar_button(ui, "Randomize", !self.video_render_active()).clicked() {
                     self.randomize_current_config();
                 }
-                if ui.button("Load config").clicked() {
+                if toolbar_button(ui, "Load config", true).clicked() {
                     self.load_config_from_dialog();
                 }
-                if ui.button("Save config").clicked() {
+                if toolbar_button(ui, "Save config", true).clicked() {
                     match export::export_config(&self.config) {
                         Ok(Some(path)) => {
                             self.status = format!("saved {}", path.display());
@@ -99,7 +89,7 @@ impl LiveApp {
                 }
                 ui.separator();
                 if let Some(path) = &self.source_path {
-                    ui.label(path.display().to_string());
+                    ui.add(egui::Label::new(path.display().to_string()).truncate());
                 } else {
                     ui.label("unsaved config");
                 }
@@ -163,25 +153,19 @@ impl LiveApp {
             }
             let response =
                 egui::Modal::new(egui::Id::new("render-settings-modal")).show(ctx, |ui| {
-                    ui.set_width(360.0);
+                    ui.set_width(MODAL_WIDTH);
                     ui.heading("Render video");
                     ui.separator();
-                    ui.spacing_mut().slider_width = 180.0;
                     if let Some(config) = self.render_config_draft.as_mut() {
                         panels::draw_render_settings(ui, config);
                     }
                     ui.separator();
                     ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !self.video_render_active(),
-                                egui::Button::new("Render video"),
-                            )
-                            .clicked()
+                        if toolbar_button(ui, "Render video", !self.video_render_active()).clicked()
                         {
                             render_requested = true;
                         }
-                        if ui.button("Close").clicked() {
+                        if toolbar_button(ui, "Close", true).clicked() {
                             close_requested = true;
                         }
                     });
@@ -254,8 +238,8 @@ impl LiveApp {
         let mut changed = false;
         egui::SidePanel::left("parameter-sidebar")
             .resizable(true)
-            .default_width(340.0)
-            .width_range(280.0..=460.0)
+            .default_width(SIDEBAR_WIDTH)
+            .width_range(SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_enabled_ui(!self.video_render_active(), |ui| {
@@ -348,4 +332,12 @@ fn output_dir_for_video_path(path: &PathBuf) -> PathBuf {
     path.parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn toolbar_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+    ui.add_enabled(enabled, egui::Button::new(label).min_size(TOOLBAR_BUTTON))
+}
+
+fn home_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+    ui.add_enabled(enabled, egui::Button::new(label).min_size(HOME_BUTTON))
 }

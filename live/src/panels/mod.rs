@@ -1,6 +1,7 @@
 mod controls;
 mod effects;
 mod export;
+mod form;
 mod render;
 mod scene;
 mod simulation;
@@ -14,7 +15,7 @@ pub fn draw_all(
     preview_scale: &mut f32,
     preview_field_scale: &mut f32,
 ) -> bool {
-    ui.spacing_mut().slider_width = 180.0;
+    form::configure_sidebar(ui);
 
     let mut changed = false;
     changed |= scene::scene_panel(ui, config);
@@ -30,6 +31,7 @@ pub fn draw_all(
 }
 
 pub fn draw_render_settings(ui: &mut Ui, config: &mut Config) -> bool {
+    form::configure_sidebar(ui);
     let mut changed = false;
     changed |= scene::export_timing_controls(ui, config);
     ui.separator();

@@ -1,10 +1,13 @@
 use dhool_config::{BackendKind, InternalFormat, Quality, parse_hex_color};
 use eframe::egui::{self, Color32, Ui};
 
-pub(super) fn quality_combo(ui: &mut Ui, label: &str, value: &mut Quality) -> bool {
+use crate::panels::form;
+
+pub(super) fn quality_combo(ui: &mut Ui, value: &mut Quality) -> bool {
     let mut changed = false;
-    egui::ComboBox::from_label(label)
+    egui::ComboBox::from_id_salt("render-quality")
         .selected_text(quality_label(*value))
+        .width(ui.spacing().combo_width)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(value, Quality::Preview, quality_label(Quality::Preview))
@@ -19,10 +22,11 @@ pub(super) fn quality_combo(ui: &mut Ui, label: &str, value: &mut Quality) -> bo
     changed
 }
 
-pub(super) fn backend_combo(ui: &mut Ui, label: &str, value: &mut BackendKind) -> bool {
+pub(super) fn backend_combo(ui: &mut Ui, value: &mut BackendKind) -> bool {
     let mut changed = false;
-    egui::ComboBox::from_label(label)
+    egui::ComboBox::from_id_salt("backend-kind")
         .selected_text(backend_label(*value))
+        .width(ui.spacing().combo_width)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(value, BackendKind::Cuda, backend_label(BackendKind::Cuda))
@@ -40,8 +44,9 @@ pub(super) fn backend_combo(ui: &mut Ui, label: &str, value: &mut BackendKind) -
 
 pub(super) fn internal_format_combo(ui: &mut Ui, value: &mut InternalFormat) -> bool {
     let mut changed = false;
-    egui::ComboBox::from_label("internal format")
+    egui::ComboBox::from_id_salt("internal-format")
         .selected_text(internal_format_label(*value))
+        .width(ui.spacing().combo_width)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(
@@ -55,10 +60,9 @@ pub(super) fn internal_format_combo(ui: &mut Ui, value: &mut InternalFormat) -> 
 }
 
 pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
+    form::row(ui, label, |ui| {
+        let mut changed = false;
         let mut color = hex_to_color32(value).unwrap_or(Color32::WHITE);
-        ui.label(label);
         if egui::color_picker::color_edit_button_srgba(
             ui,
             &mut color,
@@ -69,9 +73,11 @@ pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) ->
             *value = color32_to_hex(color);
             changed = true;
         }
-    });
-    changed |= ui.text_edit_singleline(value).changed();
-    changed
+        changed |= ui
+            .add_sized([112.0, 22.0], egui::TextEdit::singleline(value))
+            .changed();
+        changed
+    })
 }
 
 fn hex_to_color32(value: &str) -> Option<Color32> {
