@@ -1,0 +1,71 @@
+pub const SCENE_DURATION_MIN: f32 = 0.001;
+pub const SCENE_DURATION_MAX: f32 = 24.0;
+pub const SCENE_FPS_MIN: f32 = 1.0;
+pub const SCENE_FPS_MAX: f32 = 240.0;
+
+pub const RENDER_DIMENSION_MIN: u32 = 16;
+pub const RENDER_DIMENSION_MAX: u32 = 8192;
+pub const SIMULATION_FIELD_DIMENSION_MIN: u32 = 16;
+pub const SIMULATION_SUBSTEPS_MIN: u32 = 1;
+pub const SIMULATION_SUBSTEPS_UI_MAX: u32 = 128;
+
+pub const MOTION_SCALE_MIN: f32 = 0.01;
+pub const MOTION_SCALE_MAX: f32 = 4.0;
+pub const UNIT_INTERVAL_MIN: f32 = 0.0;
+pub const UNIT_INTERVAL_MAX: f32 = 1.0;
+
+pub const SIMULATION_FORCE_MIN: f32 = 0.0;
+pub const SIMULATION_FORCE_MAX: f32 = 5.0;
+
+pub const PLASMA_EMISSION_MIN: f32 = 0.0;
+pub const PLASMA_EMISSION_MAX: f32 = 32.0;
+pub const PLASMA_FILAMENT_DENSITY_MIN: f32 = 0.0;
+pub const PLASMA_FILAMENT_DENSITY_MAX: f32 = 8.0;
+pub const PLASMA_CORE_TEMPERATURE_MIN: f32 = 0.0;
+pub const PLASMA_CORE_TEMPERATURE_MAX: f32 = 4.0;
+pub const PLASMA_EDGE_WRAPPING_MIN: f32 = 0.0;
+pub const PLASMA_EDGE_WRAPPING_MAX: f32 = 4.0;
+
+pub const PARTICLES_COUNT_MAX: u32 = 2_000_000;
+pub const PARTICLES_SIZE_MIN_MIN: f32 = 0.01;
+pub const PARTICLES_SIZE_MIN_MAX: f32 = 64.0;
+pub const PARTICLES_SIZE_MAX_MAX: f32 = 96.0;
+pub const PARTICLES_LIFETIME_MIN: f32 = 0.01;
+pub const PARTICLES_LIFETIME_MAX: f32 = 60.0;
+pub const PARTICLES_EMBER_BRIGHTNESS_MIN: f32 = 0.0;
+pub const PARTICLES_EMBER_BRIGHTNESS_MAX: f32 = 32.0;
+pub const PARTICLES_GRAVITY_MIN: f32 = 0.0;
+pub const PARTICLES_GRAVITY_MAX: f32 = 2.0;
+pub const PARTICLES_DRAG_MIN: f32 = 0.0;
+pub const PARTICLES_DRAG_MAX: f32 = 20.0;
+pub const PARTICLES_THERMAL_LIFT_MIN: f32 = 0.0;
+pub const PARTICLES_THERMAL_LIFT_MAX: f32 = 4.0;
+pub const PARTICLES_JITTER_MIN: f32 = 0.0;
+pub const PARTICLES_JITTER_MAX: f32 = 2.0;
+
+pub const SMOKE_MIN: f32 = 0.0;
+pub const SMOKE_MAX: f32 = 8.0;
+
+pub const BLOOM_THRESHOLD_MIN: f32 = 0.0;
+pub const BLOOM_THRESHOLD_MAX: f32 = 64.0;
+pub const BLOOM_STRENGTH_MIN: f32 = 0.0;
+pub const BLOOM_STRENGTH_MAX: f32 = 8.0;
+pub const BLOOM_RADIUS_MIN: f32 = 0.0;
+pub const BLOOM_RADIUS_MAX: f32 = 8.0;
+pub const BLOOM_PYRAMID_LEVELS_MIN: u32 = 1;
+pub const BLOOM_PYRAMID_LEVELS_MAX: u32 = 8;
+
+pub const GRADE_EXPOSURE_MIN: f32 = -8.0;
+pub const GRADE_EXPOSURE_MAX: f32 = 8.0;
+pub const GRADE_CONTRAST_MIN: f32 = 0.0;
+pub const GRADE_CONTRAST_MAX: f32 = 4.0;
+pub const GRADE_SATURATION_MIN: f32 = 0.0;
+pub const GRADE_SATURATION_MAX: f32 = 4.0;
+pub const GRADE_BLACK_POINT_MIN: f32 = 0.0;
+pub const GRADE_BLACK_POINT_MAX: f32 = 1.0;
+pub const GRADE_VIGNETTE_MIN: f32 = 0.0;
+pub const GRADE_VIGNETTE_MAX: f32 = 2.0;
+pub const GRADE_GRAIN_MIN: f32 = 0.0;
+pub const GRADE_GRAIN_MAX: f32 = 1.0;
+
+pub const EXPORT_CRF_MAX: u8 = 51;
