@@ -1,6 +1,7 @@
 mod app;
 mod export;
 mod panels;
+mod randomize;
 mod render_thread;
 mod timeline;
 mod video_render;

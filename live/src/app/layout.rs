@@ -6,7 +6,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 
 use crate::{
     app::{LiveApp, image::fit_size},
-    export, panels, timeline, video_render,
+    export, panels, randomize, timeline, video_render,
 };
 
 impl LiveApp {
@@ -21,7 +21,7 @@ impl LiveApp {
                     ui.vertical_centered(|ui| {
                         ui.heading("dhool");
                         ui.add_space(16.0);
-                        if ui.button("Open live preview").clicked() {
+                        if ui.button("Open preview").clicked() {
                             self.show_home = false;
                             self.render_current_frame();
                         }
@@ -33,6 +33,15 @@ impl LiveApp {
                             .clicked()
                         {
                             self.open_render_settings();
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.video_render_active(),
+                                egui::Button::new("Randomize"),
+                            )
+                            .clicked()
+                        {
+                            self.randomize_current_config();
                         }
                         if ui.button("Load config").clicked() {
                             self.load_config_from_dialog();
@@ -65,13 +74,20 @@ impl LiveApp {
                 {
                     self.open_render_settings();
                 }
-                if ui.button("Load").clicked() {
+                if ui
+                    .add_enabled(!self.video_render_active(), egui::Button::new("Randomize"))
+                    .clicked()
+                {
+                    self.randomize_current_config();
+                }
+                if ui.button("Load config").clicked() {
                     self.load_config_from_dialog();
                 }
-                if ui.button("Save Config").clicked() {
+                if ui.button("Save config").clicked() {
                     match export::export_config(&self.config) {
                         Ok(Some(path)) => {
                             self.status = format!("saved {}", path.display());
+                            self.source_path = Some(path);
                             self.error = None;
                         }
                         Ok(None) => {}
@@ -85,7 +101,7 @@ impl LiveApp {
                 if let Some(path) = &self.source_path {
                     ui.label(path.display().to_string());
                 } else {
-                    ui.label("bundled default config");
+                    ui.label("unsaved config");
                 }
             });
         });
@@ -96,6 +112,25 @@ impl LiveApp {
         config.export.mode = ExportMode::Pipe;
         self.render_config_draft = Some(config);
         self.render_settings_open = true;
+    }
+
+    fn randomize_current_config(&mut self) {
+        match randomize::randomize_config(&mut self.config) {
+            Ok(()) => {
+                self.show_home = false;
+                self.source_path = None;
+                self.texture = None;
+                self.frame_index = 0;
+                self.latest_timing = None;
+                self.status = "randomized config".to_string();
+                self.error = None;
+                self.render_current_frame();
+            }
+            Err(message) => {
+                self.status = "randomize failed".to_string();
+                self.error = Some(message);
+            }
+        }
     }
 
     fn load_config_from_dialog(&mut self) {

@@ -58,8 +58,8 @@ pub(super) fn plasma_panel(ui: &mut Ui, config: &mut Config) -> bool {
                     .text("edge wrapping"),
                 )
                 .changed();
-            changed |= hex_color_control(ui, "color core", &mut config.plasma.color_core);
-            changed |= hex_color_control(ui, "color edge", &mut config.plasma.color_edge);
+            changed |= hex_color_control(ui, "core color", &mut config.plasma.color_core);
+            changed |= hex_color_control(ui, "edge color", &mut config.plasma.color_edge);
         });
     changed
 }
@@ -184,8 +184,8 @@ pub(super) fn smoke_panel(ui: &mut Ui, config: &mut Config) -> bool {
                     .text("absorption"),
             )
             .changed();
-        changed |= hex_color_control(ui, "color cool", &mut config.smoke.color_cool);
-        changed |= hex_color_control(ui, "color warm", &mut config.smoke.color_warm);
+        changed |= hex_color_control(ui, "cool color", &mut config.smoke.color_cool);
+        changed |= hex_color_control(ui, "warm color", &mut config.smoke.color_warm);
     });
     changed
 }

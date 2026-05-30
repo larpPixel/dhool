@@ -10,7 +10,7 @@ pub(super) fn render_panel(
     preview_field_scale: &mut f32,
 ) -> bool {
     let mut changed = false;
-    egui::CollapsingHeader::new("Render")
+    egui::CollapsingHeader::new("Preview")
         .default_open(true)
         .show(ui, |ui| {
             changed |= ui
@@ -44,9 +44,9 @@ pub(super) fn render_panel(
 pub(super) fn backend_panel(ui: &mut Ui, config: &mut Config) -> bool {
     let mut changed = false;
     egui::CollapsingHeader::new("Backend").show(ui, |ui| {
-        changed |= backend_combo(ui, "preferred", &mut config.backend.preferred);
+        changed |= backend_combo(ui, "preferred backend", &mut config.backend.preferred);
         changed |= ui
-            .checkbox(&mut config.backend.require_gpu, "require gpu")
+            .checkbox(&mut config.backend.require_gpu, "require GPU")
             .changed();
     });
     changed

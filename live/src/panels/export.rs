@@ -3,7 +3,7 @@ use eframe::egui::{DragValue, Ui};
 
 pub(super) fn video_settings(ui: &mut Ui, config: &mut Config) -> bool {
     let mut changed = false;
-    ui.label("video");
+    ui.strong("Video");
     ui.label("video codec");
     changed |= ui
         .text_edit_singleline(&mut config.export.video_codec)

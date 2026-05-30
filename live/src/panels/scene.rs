@@ -21,7 +21,7 @@ pub(super) fn scene_panel(ui: &mut Ui, config: &mut Config) -> bool {
 
 pub(super) fn export_timing_controls(ui: &mut Ui, config: &mut Config) -> bool {
     let mut changed = false;
-    ui.label("animation");
+    ui.strong("Animation");
     changed |= ui
         .add(
             egui::Slider::new(
