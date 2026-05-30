@@ -17,5 +17,10 @@ cargo run -p dhool -- preview configs/inferno.production.yaml --duration 3 --fps
 cargo run -p dhool -- final configs/inferno.production.yaml --export both
 ```
 
-Production rendering requires CUDA. The CPU reference backend is reserved for tests and deterministic setup validation; it is not a production fallback.
+Alternate sample config:
 
+```bash
+cargo run -p dhool -- validate configs/random.yaml
+```
+
+Production rendering requires CUDA. The CPU reference backend is reserved for tests and deterministic setup validation; it is not a production fallback.
