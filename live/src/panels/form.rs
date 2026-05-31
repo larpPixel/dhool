@@ -16,6 +16,7 @@ const CONTROL_INNER_GAP: f32 = 8.0;
 const DRAG_WIDTH: f32 = 112.0;
 const ROW_HEIGHT: f32 = theme::CONTROL_HEIGHT;
 const SECTION_HEADER_HEIGHT: f32 = 28.0;
+const ROW_MAX_WIDTH: f32 = 340.0;
 
 pub(super) fn configure_sidebar(ui: &mut Ui) {
     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
@@ -72,17 +73,31 @@ pub(super) fn subheading(ui: &mut Ui, label: &str) {
 }
 
 pub(super) fn row(ui: &mut Ui, label: &str, add_control: impl FnOnce(&mut Ui) -> bool) -> bool {
-    let metrics = RowMetrics::for_width(ui.available_width());
+    let available_width = ui.available_width();
+    let row_width = available_width.min(ROW_MAX_WIDTH);
+    let left_padding = ((available_width - row_width) * 0.5).max(0.0);
+    let metrics = RowMetrics::for_width(row_width);
+
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.spacing_mut().slider_width = metrics.main_width;
-        ui.spacing_mut().combo_width = metrics.span_width;
-        ui.spacing_mut().text_edit_width = metrics.span_width;
-        ui.spacing_mut().interact_size.y = ROW_HEIGHT;
-        label_cell(ui, label);
-        ui.add_space(COLUMN_GAP);
-        ui.spacing_mut().item_spacing.x = CONTROL_INNER_GAP;
-        add_control(ui)
+        if left_padding > 0.0 {
+            ui.add_space(left_padding);
+        }
+        ui.allocate_ui_with_layout(
+            Vec2::new(row_width, ROW_HEIGHT),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.spacing_mut().slider_width = metrics.main_width;
+                ui.spacing_mut().combo_width = metrics.span_width;
+                ui.spacing_mut().text_edit_width = metrics.span_width;
+                ui.spacing_mut().interact_size.y = ROW_HEIGHT;
+                label_cell(ui, label);
+                ui.add_space(COLUMN_GAP);
+                ui.spacing_mut().item_spacing.x = CONTROL_INNER_GAP;
+                add_control(ui)
+            },
+        )
+        .inner
     })
     .inner
 }
