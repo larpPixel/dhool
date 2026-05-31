@@ -4,6 +4,7 @@ use dhool_config::{BackendKind, ExportMode};
 use dhool_core::sanitize_stem;
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
+    scroll_area::ScrollBarVisibility,
 };
 
 use crate::{
@@ -91,7 +92,7 @@ impl LiveApp {
             .frame(theme::bar_frame())
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     ui.label(
                         RichText::new("dhool")
                             .size(16.0)
@@ -342,6 +343,7 @@ impl LiveApp {
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
                         ui.add_enabled_ui(!self.video_render_active(), |ui| {
                             changed |= panels::draw_all(

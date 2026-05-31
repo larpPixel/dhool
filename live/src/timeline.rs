@@ -41,7 +41,7 @@ pub fn draw(
     };
 
     ui.spacing_mut().item_spacing = egui::vec2(9.0, 0.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_centered(|ui| {
         let play_label = if *playing { "Pause" } else { "Play" };
         if theme::button(
             ui,

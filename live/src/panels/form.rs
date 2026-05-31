@@ -92,7 +92,7 @@ pub(super) fn text_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
     row(ui, label, |ui| {
         ui.add_sized(
             [control_span_width(ui), ROW_HEIGHT],
-            egui::TextEdit::singleline(value),
+            egui::TextEdit::singleline(value).vertical_align(Align::Center),
         )
         .changed()
     })

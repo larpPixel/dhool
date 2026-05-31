@@ -81,7 +81,7 @@ pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) ->
         changed |= ui
             .add_sized(
                 [text_width, theme::CONTROL_HEIGHT],
-                egui::TextEdit::singleline(value),
+                egui::TextEdit::singleline(value).vertical_align(egui::Align::Center),
             )
             .changed();
         changed
