@@ -386,9 +386,9 @@ impl LiveApp {
                 }
 
                 if let Some(error) = &self.error {
-                    paint_preview_badge(ui, rect, error, theme::ERROR);
+                    paint_preview_status(ui, rect, error, theme::ERROR);
                 } else {
-                    paint_preview_badge(ui, rect, &self.status, theme::TEXT_MUTED);
+                    paint_preview_status(ui, rect, &self.status, theme::TEXT_MUTED);
                 }
             });
     }
@@ -467,22 +467,14 @@ fn paint_home_background(ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-fn paint_preview_badge(ui: &mut egui::Ui, rect: Rect, text: &str, color: Color32) {
+fn paint_preview_status(ui: &mut egui::Ui, rect: Rect, text: &str, color: Color32) {
     let max_width = (rect.width() - 32.0).max(80.0).min(520.0);
-    let badge = Rect::from_min_size(
+    let status_rect = Rect::from_min_size(
         rect.left_top() + Vec2::new(16.0, 16.0),
-        Vec2::new(max_width, 28.0),
-    );
-    ui.painter()
-        .rect_filled(badge, 5.0, Color32::from_black_alpha(170));
-    ui.painter().rect_stroke(
-        badge,
-        5.0,
-        (1.0, theme::BORDER_SOFT),
-        egui::StrokeKind::Inside,
+        Vec2::new(max_width, theme::CONTROL_HEIGHT),
     );
     ui.put(
-        badge.shrink2(Vec2::new(10.0, 0.0)),
-        egui::Label::new(RichText::new(text).size(13.0).color(color)).truncate(),
+        status_rect,
+        egui::Label::new(RichText::new(text).size(12.0).color(color)).truncate(),
     );
 }

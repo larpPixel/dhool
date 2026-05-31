@@ -64,6 +64,7 @@ pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) ->
     form::row(ui, label, |ui| {
         let mut changed = false;
         let mut color = hex_to_color32(value).unwrap_or(Color32::WHITE);
+        ui.spacing_mut().interact_size = egui::vec2(theme::CONTROL_HEIGHT, theme::CONTROL_HEIGHT);
         if egui::color_picker::color_edit_button_srgba(
             ui,
             &mut color,
@@ -75,7 +76,7 @@ pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) ->
             changed = true;
         }
         let text_width =
-            (form::control_width(ui) - theme::CONTROL_HEIGHT - ui.spacing().item_spacing.x)
+            (form::control_span_width(ui) - theme::CONTROL_HEIGHT - ui.spacing().item_spacing.x)
                 .max(104.0);
         changed |= ui
             .add_sized(

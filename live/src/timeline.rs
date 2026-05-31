@@ -1,13 +1,14 @@
 use dhool_core::FrameTiming;
-use eframe::egui::{self, Align, Layout, RichText, Ui, Vec2};
+use eframe::egui::{self, Align, DragValue, Layout, RichText, Ui, Vec2};
 
 use crate::app::theme;
 
 const TIMELINE_BUTTON: Vec2 = Vec2::new(72.0, 28.0);
 const FRAME_SLIDER_WIDTH: f32 = 260.0;
 const FRAME_SLIDER_COMPACT_WIDTH: f32 = 200.0;
-const FPS_SLIDER_WIDTH: f32 = 156.0;
-const FPS_SLIDER_COMPACT_WIDTH: f32 = 132.0;
+const FPS_SLIDER_WIDTH: f32 = 120.0;
+const FPS_SLIDER_COMPACT_WIDTH: f32 = 96.0;
+const FPS_VALUE_WIDTH: f32 = 46.0;
 
 pub fn draw(
     ui: &mut Ui,
@@ -56,21 +57,31 @@ pub fn draw(
         }
         changed |= ui.checkbox(loop_playback, "Loop").changed();
         changed |= ui.checkbox(max_gpu, "Max GPU").changed();
-        changed |= ui
-            .add_enabled_ui(!*max_gpu, |ui| {
-                ui.add_sized(
+        if !*max_gpu {
+            small_label(ui, "Preview fps");
+            changed |= ui
+                .add_sized(
                     [fps_slider_width, theme::CONTROL_HEIGHT],
-                    egui::Slider::new(target_preview_fps, 1.0..=240.0).text("Preview fps"),
+                    egui::Slider::new(target_preview_fps, 1.0..=240.0).show_value(false),
                 )
-                .changed()
-            })
-            .inner;
+                .changed();
+            changed |= ui
+                .add_sized(
+                    [FPS_VALUE_WIDTH, theme::CONTROL_HEIGHT],
+                    DragValue::new(target_preview_fps)
+                        .range(1.0..=240.0)
+                        .speed(1.0)
+                        .max_decimals(0),
+                )
+                .changed();
+        } else if !compact {
+            small_label(ui, "Max throughput");
+        }
+        small_label(ui, "Frame");
         changed |= ui
             .add_sized(
                 [frame_slider_width, theme::CONTROL_HEIGHT],
-                egui::Slider::new(frame_index, 0..=last_frame)
-                    .text("Frame")
-                    .show_value(false),
+                egui::Slider::new(frame_index, 0..=last_frame).show_value(false),
             )
             .changed();
         let current_seconds = *frame_index as f32 / fps.max(1.0);
@@ -111,5 +122,9 @@ pub fn draw(
 }
 
 fn metric_text(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text).size(11.0).color(theme::TEXT_MUTED));
+}
+
+fn small_label(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(11.0).color(theme::TEXT_MUTED));
 }
