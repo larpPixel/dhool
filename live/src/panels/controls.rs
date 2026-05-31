@@ -1,6 +1,7 @@
 use dhool_config::{BackendKind, InternalFormat, Quality, parse_hex_color};
 use eframe::egui::{self, Color32, Ui};
 
+use crate::app::theme;
 use crate::panels::form;
 
 pub(super) fn quality_combo(ui: &mut Ui, value: &mut Quality) -> bool {
@@ -73,8 +74,14 @@ pub(super) fn hex_color_control(ui: &mut Ui, label: &str, value: &mut String) ->
             *value = color32_to_hex(color);
             changed = true;
         }
+        let text_width =
+            (form::control_width(ui) - theme::CONTROL_HEIGHT - ui.spacing().item_spacing.x)
+                .max(104.0);
         changed |= ui
-            .add_sized([112.0, 22.0], egui::TextEdit::singleline(value))
+            .add_sized(
+                [text_width, theme::CONTROL_HEIGHT],
+                egui::TextEdit::singleline(value),
+            )
             .changed();
         changed
     })

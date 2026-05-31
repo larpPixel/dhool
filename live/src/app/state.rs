@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::mpsc::channel, time::Instant};
 
 use crate::{
-    app::LiveApp,
+    app::{LiveApp, theme},
     render_thread::{RenderRequest, spawn_render_thread},
 };
 use dhool_config::Config;
@@ -12,6 +12,8 @@ impl LiveApp {
         config: Config,
         source_path: Option<PathBuf>,
     ) -> Self {
+        theme::apply(&cc.egui_ctx);
+
         let (render_tx, request_rx) = channel::<RenderRequest>();
         let (response_tx, response_rx) = channel();
         let render_worker_count = spawn_render_thread(request_rx, response_tx, cc.egui_ctx.clone());

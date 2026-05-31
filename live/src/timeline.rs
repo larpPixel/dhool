@@ -1,9 +1,13 @@
 use dhool_core::FrameTiming;
-use eframe::egui::{self, Ui, Vec2};
+use eframe::egui::{self, Align, Layout, RichText, Ui, Vec2};
 
-const TIMELINE_BUTTON: Vec2 = Vec2::new(64.0, 24.0);
-const FRAME_SLIDER_WIDTH: f32 = 220.0;
-const FPS_SLIDER_WIDTH: f32 = 150.0;
+use crate::app::theme;
+
+const TIMELINE_BUTTON: Vec2 = Vec2::new(72.0, 28.0);
+const FRAME_SLIDER_WIDTH: f32 = 260.0;
+const FRAME_SLIDER_COMPACT_WIDTH: f32 = 200.0;
+const FPS_SLIDER_WIDTH: f32 = 156.0;
+const FPS_SLIDER_COMPACT_WIDTH: f32 = 132.0;
 
 pub fn draw(
     ui: &mut Ui,
@@ -23,12 +27,29 @@ pub fn draw(
     let last_frame = frame_count.saturating_sub(1);
     *frame_index = (*frame_index).min(last_frame);
 
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
+    let compact = ui.available_width() < 1120.0;
+    let frame_slider_width = if compact {
+        FRAME_SLIDER_COMPACT_WIDTH
+    } else {
+        FRAME_SLIDER_WIDTH
+    };
+    let fps_slider_width = if compact {
+        FPS_SLIDER_COMPACT_WIDTH
+    } else {
+        FPS_SLIDER_WIDTH
+    };
+
+    ui.spacing_mut().item_spacing = egui::vec2(9.0, 0.0);
+    ui.horizontal(|ui| {
         let play_label = if *playing { "Pause" } else { "Play" };
-        if ui
-            .add(egui::Button::new(play_label).min_size(TIMELINE_BUTTON))
-            .clicked()
+        if theme::button(
+            ui,
+            play_label,
+            TIMELINE_BUTTON,
+            true,
+            theme::ButtonKind::Primary,
+        )
+        .clicked()
         {
             *playing = !*playing;
             changed = true;
@@ -38,7 +59,7 @@ pub fn draw(
         changed |= ui
             .add_enabled_ui(!*max_gpu, |ui| {
                 ui.add_sized(
-                    [FPS_SLIDER_WIDTH, 22.0],
+                    [fps_slider_width, theme::CONTROL_HEIGHT],
                     egui::Slider::new(target_preview_fps, 1.0..=240.0).text("Preview fps"),
                 )
                 .changed()
@@ -46,34 +67,56 @@ pub fn draw(
             .inner;
         changed |= ui
             .add_sized(
-                [FRAME_SLIDER_WIDTH, 22.0],
+                [frame_slider_width, theme::CONTROL_HEIGHT],
                 egui::Slider::new(frame_index, 0..=last_frame)
                     .text("Frame")
                     .show_value(false),
             )
             .changed();
         let current_seconds = *frame_index as f32 / fps.max(1.0);
-        ui.label(format!("{current_seconds:.2}s"));
-        ui.separator();
-        ui.label(format!("Frame: {}/{}", *frame_index + 1, frame_count));
+        ui.label(
+            RichText::new(format!("{current_seconds:.2}s"))
+                .monospace()
+                .color(theme::TEXT),
+        );
 
-        if let Some(timing) = timing {
-            let render_fps = if timing.gpu_ms > 0.0 {
-                1000.0 / timing.gpu_ms
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if !compact {
+                metric_chip(ui, &format!("Queue {in_flight}/{pipeline_depth}"));
+                metric_chip(ui, &format!("Scale {preview_scale:.2}"));
+            }
+            if let Some(timing) = timing {
+                let render_fps = if timing.gpu_ms > 0.0 {
+                    1000.0 / timing.gpu_ms
+                } else {
+                    0.0
+                };
+                let timing_label = if compact {
+                    format!("GPU {:.1} ms  {:.1} fps", timing.gpu_ms, render_fps)
+                } else {
+                    format!(
+                        "GPU {:.1} ms  Readback {:.1} ms  {:.1} fps",
+                        timing.gpu_ms, timing.readback_ms, render_fps
+                    )
+                };
+                metric_chip(ui, &timing_label);
             } else {
-                0.0
-            };
-            ui.label(format!(
-                "GPU: {:.1} ms  Readback: {:.1} ms  {:.1} fps",
-                timing.gpu_ms, timing.readback_ms, render_fps
-            ));
-        } else {
-            ui.label("GPU: waiting");
-        }
-
-        ui.label(format!("Scale: {preview_scale:.2}"));
-        ui.label(format!("Queue: {in_flight}/{pipeline_depth}"));
+                metric_chip(ui, "GPU waiting");
+            }
+            metric_chip(ui, &format!("Frame {}/{}", *frame_index + 1, frame_count));
+        });
     });
 
     changed
+}
+
+fn metric_chip(ui: &mut Ui, text: &str) {
+    egui::Frame::new()
+        .fill(theme::PANEL_DEEP)
+        .stroke((1.0, theme::BORDER_SOFT))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(11.0).color(theme::TEXT_MUTED));
+        });
 }

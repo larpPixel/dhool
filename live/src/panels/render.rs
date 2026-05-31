@@ -1,6 +1,7 @@
 use dhool_config::{Config, RENDER_DIMENSION_MAX, RENDER_DIMENSION_MIN};
-use eframe::egui::Ui;
+use eframe::egui::{self, Ui};
 
+use crate::app::theme;
 use crate::panels::controls::{backend_combo, internal_format_combo, quality_combo};
 use crate::panels::form;
 
@@ -45,7 +46,11 @@ pub(super) fn backend_panel(ui: &mut Ui, config: &mut Config) -> bool {
             backend_combo(ui, &mut config.backend.preferred)
         });
         changed |= form::row(ui, "Require GPU", |ui| {
-            ui.checkbox(&mut config.backend.require_gpu, "").changed()
+            ui.add_sized(
+                [theme::CONTROL_HEIGHT, theme::CONTROL_HEIGHT],
+                egui::Checkbox::new(&mut config.backend.require_gpu, ""),
+            )
+            .changed()
         });
         changed
     })

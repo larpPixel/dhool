@@ -3,6 +3,7 @@ mod layout;
 mod playback;
 mod rendering;
 mod state;
+pub(crate) mod theme;
 
 use std::{
     path::PathBuf,
