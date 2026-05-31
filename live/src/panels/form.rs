@@ -33,7 +33,7 @@ pub(super) fn section(
     add_contents: impl FnOnce(&mut Ui) -> bool,
 ) -> bool {
     let mut changed = false;
-    ui.add_space(10.0);
+    ui.add_space(6.0);
     draw_section_divider(ui);
     ui.add_space(6.0);
 
@@ -55,7 +55,6 @@ pub(super) fn section(
     if state.is_open() {
         ui.add_space(5.0);
         changed |= add_contents(ui);
-        ui.add_space(4.0);
     }
     state.store(ui.ctx());
     changed
