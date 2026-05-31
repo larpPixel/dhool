@@ -82,8 +82,8 @@ pub fn draw(
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if !compact {
-                metric_chip(ui, &format!("Queue {in_flight}/{pipeline_depth}"));
-                metric_chip(ui, &format!("Scale {preview_scale:.2}"));
+                metric_text(ui, &format!("Queue {in_flight}/{pipeline_depth}"));
+                metric_text(ui, &format!("Scale {preview_scale:.2}"));
             }
             if let Some(timing) = timing {
                 let render_fps = if timing.gpu_ms > 0.0 {
@@ -99,24 +99,17 @@ pub fn draw(
                         timing.gpu_ms, timing.readback_ms, render_fps
                     )
                 };
-                metric_chip(ui, &timing_label);
+                metric_text(ui, &timing_label);
             } else {
-                metric_chip(ui, "GPU waiting");
+                metric_text(ui, "GPU waiting");
             }
-            metric_chip(ui, &format!("Frame {}/{}", *frame_index + 1, frame_count));
+            metric_text(ui, &format!("Frame {}/{}", *frame_index + 1, frame_count));
         });
     });
 
     changed
 }
 
-fn metric_chip(ui: &mut Ui, text: &str) {
-    egui::Frame::new()
-        .fill(theme::PANEL_DEEP)
-        .stroke((1.0, theme::BORDER_SOFT))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(11.0).color(theme::TEXT_MUTED));
-        });
+fn metric_text(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text).size(11.0).color(theme::TEXT_MUTED));
 }

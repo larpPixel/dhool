@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use eframe::egui::{self, DragValue, RichText, Slider, Ui};
+use eframe::egui::{self, DragValue, Pos2, RichText, Sense, Slider, Ui};
 
 use crate::app::theme;
 
@@ -26,18 +26,19 @@ pub(super) fn section(
     add_contents: impl FnOnce(&mut Ui) -> bool,
 ) -> bool {
     let mut changed = false;
-    theme::section_frame().show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        egui::CollapsingHeader::new(RichText::new(title).size(13.0).strong().color(theme::TEXT))
-            .default_open(default_open)
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
-                ui.spacing_mut().slider_width = control_width(ui);
-                ui.spacing_mut().combo_width = control_width(ui);
-                ui.add_space(4.0);
-                changed |= add_contents(ui);
-            });
-    });
+    ui.add_space(8.0);
+    draw_section_divider(ui);
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new(RichText::new(title).size(13.0).strong().color(theme::TEXT))
+        .default_open(default_open)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().slider_width = control_width(ui);
+            ui.spacing_mut().combo_width = control_width(ui);
+            ui.add_space(4.0);
+            changed |= add_contents(ui);
+        });
+    ui.add_space(4.0);
     changed
 }
 
@@ -140,4 +141,16 @@ pub(super) fn control_width(ui: &Ui) -> f32 {
 
 fn width_for_row(row_width: f32) -> f32 {
     (row_width - LABEL_WIDTH - ROW_GAP).clamp(CONTROL_MIN_WIDTH, CONTROL_MAX_WIDTH)
+}
+
+fn draw_section_divider(ui: &mut Ui) {
+    let width = ui.available_width().max(1.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 1.0), Sense::hover());
+    ui.painter().line_segment(
+        [
+            Pos2::new(rect.left(), rect.center().y),
+            Pos2::new(rect.right(), rect.center().y),
+        ],
+        (1.0, theme::BORDER_SOFT),
+    );
 }

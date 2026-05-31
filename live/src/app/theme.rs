@@ -133,15 +133,6 @@ pub(crate) fn sidebar_frame() -> egui::Frame {
         .inner_margin(Margin::symmetric(12, 12))
 }
 
-pub(crate) fn section_frame() -> egui::Frame {
-    egui::Frame::new()
-        .fill(SECTION)
-        .stroke(Stroke::new(1.0, BORDER_SOFT))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::symmetric(10, 8))
-        .outer_margin(Margin::symmetric(0, 4))
-}
-
 pub(crate) fn button(
     ui: &mut egui::Ui,
     label: &str,
