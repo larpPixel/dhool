@@ -18,6 +18,7 @@ const MODAL_WIDTH: f32 = 440.0;
 const SIDEBAR_WIDTH: f32 = 388.0;
 const SIDEBAR_MIN_WIDTH: f32 = 344.0;
 const SIDEBAR_MAX_WIDTH: f32 = 520.0;
+const HOME_TOP_PADDING: f32 = 36.0;
 
 impl LiveApp {
     pub(super) fn draw_home(&mut self, ctx: &egui::Context) {
@@ -30,6 +31,7 @@ impl LiveApp {
                     egui::Layout::centered_and_justified(egui::Direction::TopDown),
                     |ui| {
                         ui.vertical_centered(|ui| {
+                            ui.add_space(HOME_TOP_PADDING);
                             ui.label(
                                 RichText::new("dhool")
                                     .size(40.0)
