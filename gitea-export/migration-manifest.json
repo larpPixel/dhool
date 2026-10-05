@@ -1,0 +1,23 @@
+{
+  "source": "jR4dh3y/dhool",
+  "source_url": "https://git.jr4.in/jR4dh3y/dhool",
+  "destination": "larpPixel/dhool",
+  "visibility": "public",
+  "default_branch": "master",
+  "original_git_refs": {
+    "source": "jR4dh3y/dhool",
+    "name": "dhool",
+    "private": false,
+    "source_present": true,
+    "branches": {
+      "refs/heads/master": "5af9541202d64c564a1c005c54919f1723b773b4"
+    },
+    "tags": {},
+    "other_refs": {},
+    "oversized_blobs": []
+  },
+  "github_archival_ref_mapping": {},
+  "discussion_mapping": {},
+  "recovered_refs": {},
+  "limitations": []
+}
